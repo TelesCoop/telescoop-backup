@@ -1,3 +1,4 @@
 Django==3.1
 django-anymail[mailgun]
 swiftclient
+django-storages
