@@ -1,14 +1,118 @@
 import datetime
+import os
+import shutil
+import subprocess
 
 from django.conf import settings
 
-import swiftclient
+import boto
+from boto.s3.key import Key
+
 
 DATE_FORMAT = "%Y-%m-%dT%H:%M"
 FILE_FORMAT = f"{DATE_FORMAT}_db.sqlite"
 FILE_PATH = "{project_name}/{file_name}"
 DEFAULT_AUTH_VERSION = 2
 DEFAULT_CONTAINER_NAME = "db-backups"
+db_file_path = settings.DATABASES["default"]["NAME"]
+DATABASE_BACKUP_FILE = os.path.join(os.path.dirname(db_file_path), "backup.sqlite")
+DUMP_COMMAND = """sqlite3 '{source_file}' ".backup '{backup_file}'" """.format(
+    source_file=db_file_path, backup_file=DATABASE_BACKUP_FILE
+)
+KEEP_N_DAYS = getattr(settings.BACKUP_KEEP_N_DAYS, 31)
+
+
+def boto_connexion():
+    """Connect to AWS S3."""
+    return boto.connect_s3(
+        settings.BACKUP_ACCESS,
+        settings.BACKUP_SECRET,
+        host=getattr(settings, settings.BACKUP_HOST),
+    )
+
+
+def backup_file(file_path: str, remote_key: str, connexion=None):
+    """Backup backup_file on third-party server."""
+    if connexion is None:
+        connexion = boto_connexion()
+    bucket = get_backup_bucket(connexion)
+
+    key = Key(bucket)
+    key.key = remote_key
+    key.set_contents_from_filename(file_path)
+
+
+def get_backup_bucket(connexion=None):
+    if connexion is None:
+        connexion = boto_connexion()
+    return connexion.get_bucket(settings.BACKUP_BUCKET)
+
+
+def dump_database():
+    """Dump the database to a file."""
+    subprocess.check_output(DUMP_COMMAND, shell=True)
+
+
+def remove_old_database_files():
+    """Remove files older than KEEP_N_DAYS days."""
+    connexion = boto_connexion()
+    backup_keys = get_backup_keys(connexion)
+    bucket = get_backup_bucket(connexion)
+
+    now = datetime.datetime.now()
+    date_format = FILE_FORMAT
+
+    for backup_key in backup_keys:
+        file_date = datetime.datetime.strptime(
+            backup_key.key.split("/")[1], date_format
+        )
+        if (now - file_date).total_seconds() > KEEP_N_DAYS * 3600 * 24:
+            print("removing old file {}".format(backup_key.key))
+            bucket.delete_key(backup_key)
+        else:
+            print("keeping {}".format(backup_key.key))
+
+
+def upload_to_online_backup():
+    """Upload the database file online."""
+    remote_path = FILE_PATH.format(get_project_name(), db_name())
+    backup_file(file_path=DATABASE_BACKUP_FILE, remote_key=remote_path)
+
+
+def backup_database():
+    """Main function."""
+    dump_database()
+    upload_to_online_backup()
+    remove_old_database_files()
+
+
+def get_backup_keys(connexion=None):
+    """Return the db keys."""
+    bucket = get_backup_bucket(connexion)
+    return list(bucket.list())
+
+
+def recover_database(db_file):
+    # download latest db_file
+    bucket = get_backup_bucket()
+    key = bucket.get_key(db_file)
+    if not key:
+        raise ValueError("wrong input file db")
+    key.get_contents_to_filename(DATABASE_BACKUP_FILE)
+
+    # copy to database file
+    shutil.copy(db_file_path, "db_before_recovery.sqlite")
+    shutil.copy(DATABASE_BACKUP_FILE, db_file_path)
+    os.remove(DATABASE_BACKUP_FILE)
+
+
+def list_saved_databases():
+    """Prints the backups to stdout."""
+    bucket = get_backup_bucket()
+    backup_keys = list(bucket.list())
+
+    for backup_key in backup_keys:
+        print(backup_key.key)
 
 
 def get_project_name():
@@ -18,6 +122,10 @@ def get_project_name():
     Could cause conflicts if two projects have the same name.
     """
     return settings.BASE_DIR.name
+
+
+def get_container_name():
+    return f"{get_project_name()}_db_backup"
 
 
 def db_name() -> str:
@@ -38,33 +146,7 @@ def retrieve_openstack_configuration():
         auth_version = getattr(settings, "BACKUP_AUTH_VERSION", 2)
         container_name = getattr(settings, "BACKUP_CONTAINER_NAME")
     except AttributeError as e:
-        missing_attribute = e.args[0].split('attribute ')[1]
+        missing_attribute = e.args[0].split("attribute ")[1]
         raise AttributeError(f"You must define '{missing_attribute}' in your settings.")
 
     return url, user, key, tenant_name, auth_version, container_name
-
-
-def backup_db() -> None:
-    url, user, key, tenant_name, auth_version, container_name = retrieve_openstack_configuration()
-
-    db_engine = settings.DATABASES["default"]["ENGINE"]
-    db_file_path = settings.DATABASES["default"]["NAME"]
-
-    if not ("sqlite" in db_engine or "spatialite" in db_engine):
-        raise ValueError(f"Can only backup sqlite database. Engine is '{db_engine}'.")
-
-    remote_path = FILE_PATH.format(get_project_name(), db_name())
-
-    with open(db_file_path, "r") as db_file:
-        with swiftclient.client.Connection(authurl=url, user=user, key=key, blabla=blabla) as connection:
-            connection.put_object(container_name, remote_path, db_file.read())
-
-    print(f"DB backed up at path {remote_path} in container {container_name}")
-
-
-def remove_old_databases():
-    keep_databases_days = getattr(settings, "BACKUP_DATABASE_KEEP_N_DAYS", 30)
-    # TODO :
-    #  - list databases
-    #  - parse date from name
-    #  - remove old ones
