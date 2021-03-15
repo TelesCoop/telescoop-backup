@@ -1,10 +1,11 @@
 # Telescoop Backup
 
-Backup your sqlite database to an Open Stack Swift compatible provider.
+Backup your sqlite database to an S3 compatible provider.
 
 ## Quick start
 
 1. Add "Telescop Auth" to your INSTALLED_APPS setting like this::
+
 ```python
 INSTALLED_APPS = [
     ...
@@ -17,17 +18,17 @@ INSTALLED_APPS = [
 ```python
     path('backup/', include('telescoop_backup.urls')),
 ```
-    
-3. Run ``python manage.py migrate`` to create the auth models.
-
-4. Define the following variables in `settings.py`
+   
+3. Define the following settings in `settings.py`
 
 ```python
-
-BACKUP_ACCESS = 'my_access'  # AWS ACCESS
-BACKUP_SECRET = 'my_secret'  # AWS SECRET KEY
-BACKUP_BUCKET = 'my_project_backup'  # AWS Bucket
+BACKUP_ACCESS = 'my_access'  # S3 ACCESS
+BACKUP_SECRET = 'my_secret'  # S3 SECRET KEY
+BACKUP_BUCKET = 'my_project_backup'  # S3 Bucket
 BACKUP_KEEP_N_DAYS = 31  # Optional, defaults to 31
-BACKUP_HOST = None  # Optional
-BACKUP_REGION = None  # Optional
+BACKUP_REGION = None  # Optional, defaults to eu-west-3 (Paris)
+BACKUP_HOST = None  # Optional, default to s3.{BACKUP_REGIOn}.amazonaws.com
 ```
+
+By default, old backups are removed in order not to take up too much space.
+If you don't want them removed, just set a very large value for BACKUP_KEEP_N_DAYS.
