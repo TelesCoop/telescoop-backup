@@ -41,9 +41,9 @@ class Command(BaseCommand):
         elif options["action"] == "list":
             list_saved_databases()
         elif options["action"] == "recover":
-            if not len(sys.argv) > 2:
+            if not len(sys.argv) > 3:
                 usage_error()
-            db_file = sys.argv[2]
+            db_file = sys.argv[3]
             recover_database(db_file)
         else:
             usage_error()

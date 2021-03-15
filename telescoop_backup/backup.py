@@ -11,7 +11,6 @@ from boto.s3.key import Key
 
 DATE_FORMAT = "%Y-%m-%dT%H:%M"
 FILE_FORMAT = f"{DATE_FORMAT}_db.sqlite"
-FILE_PATH = "{project_name}/{file_name}"
 DEFAULT_AUTH_VERSION = 2
 DEFAULT_CONTAINER_NAME = "db-backups"
 db_file_path = settings.DATABASES["default"]["NAME"]
@@ -19,7 +18,12 @@ DATABASE_BACKUP_FILE = os.path.join(os.path.dirname(db_file_path), "backup.sqlit
 DUMP_COMMAND = """sqlite3 '{source_file}' ".backup '{backup_file}'" """.format(
     source_file=db_file_path, backup_file=DATABASE_BACKUP_FILE
 )
-KEEP_N_DAYS = getattr(settings.BACKUP_KEEP_N_DAYS, 31)
+KEEP_N_DAYS = getattr(settings, "BACKUP_KEEP_N_DAYS", 31)
+host = getattr(settings, "BACKUP_HOST", None)
+if host is None:
+    region = getattr(settings, "BACKUP_REGION", "eu-west-3")
+    host = f's3.{region}.amazonaws.com'
+LAST_BACKUP_FILE = os.path.join(settings.BASE_DIR, '.telescoop_backup_last_backup')
 
 
 def boto_connexion():
@@ -27,7 +31,7 @@ def boto_connexion():
     return boto.connect_s3(
         settings.BACKUP_ACCESS,
         settings.BACKUP_SECRET,
-        host=getattr(settings, settings.BACKUP_HOST),
+        host=host,
     )
 
 
@@ -64,7 +68,7 @@ def remove_old_database_files():
 
     for backup_key in backup_keys:
         file_date = datetime.datetime.strptime(
-            backup_key.key.split("/")[1], date_format
+            backup_key.key, date_format
         )
         if (now - file_date).total_seconds() > KEEP_N_DAYS * 3600 * 24:
             print("removing old file {}".format(backup_key.key))
@@ -75,8 +79,17 @@ def remove_old_database_files():
 
 def upload_to_online_backup():
     """Upload the database file online."""
-    remote_path = FILE_PATH.format(get_project_name(), db_name())
-    backup_file(file_path=DATABASE_BACKUP_FILE, remote_key=remote_path)
+    backup_file(file_path=DATABASE_BACKUP_FILE, remote_key=db_name())
+
+
+def update_latest_backup():
+    with open(LAST_BACKUP_FILE, 'w') as fh:
+        fh.write(datetime.datetime.now().strftime(DATE_FORMAT))
+
+
+def get_latest_backup():
+    with open(LAST_BACKUP_FILE, 'r') as fh:
+        return datetime.datetime.strptime(fh.read().strip(), DATE_FORMAT)
 
 
 def backup_database():
@@ -84,6 +97,7 @@ def backup_database():
     dump_database()
     upload_to_online_backup()
     remove_old_database_files()
+    update_latest_backup()
 
 
 def get_backup_keys(connexion=None):
@@ -113,19 +127,6 @@ def list_saved_databases():
 
     for backup_key in backup_keys:
         print(backup_key.key)
-
-
-def get_project_name():
-    """
-    Get the name of the project from BASE_DIR.
-
-    Could cause conflicts if two projects have the same name.
-    """
-    return settings.BASE_DIR.name
-
-
-def get_container_name():
-    return f"{get_project_name()}_db_backup"
 
 
 def db_name() -> str:
