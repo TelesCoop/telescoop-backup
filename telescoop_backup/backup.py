@@ -88,6 +88,8 @@ def update_latest_backup():
 
 
 def get_latest_backup():
+    if not os.path.isfile(LAST_BACKUP_FILE):
+        return None
     with open(LAST_BACKUP_FILE, 'r') as fh:
         return datetime.datetime.strptime(fh.read().strip(), DATE_FORMAT)
 
