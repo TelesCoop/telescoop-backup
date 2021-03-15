@@ -1,0 +1,14 @@
+{% extends "main/emails/html/base.html" %}
+
+
+{% block preview %}Votre compte est bientôt actif !{% endblock %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div>Dernière étape avant de rejoindre <strong>Green Menu</strong> !</div>
+<br />
+<div>Vérifier votre email en cliquant ci-dessous...</div>
+<br />
+<div><a href="{{ url }}">Vérifier mon email</a></div>
+{% endblock %}

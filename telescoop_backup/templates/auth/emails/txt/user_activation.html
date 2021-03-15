@@ -1,0 +1,11 @@
+{% extends "main/emails/txt/base.html" %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+Dernière étape avant de rejoindre Green Menu !
+
+Vérifier votre email en cliquant ci-dessous...
+
+Vérifier mon email => {{ url | safe }}
+{% endblock %}
