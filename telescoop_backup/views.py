@@ -16,7 +16,7 @@ def check_backup_is_recent(request, hours):
 
 def show_last_backup(request):
     last_backup = get_latest_backup()
-    reponse = last_backup.strftime(DATE_FORMAT)
+    response = last_backup.strftime(DATE_FORMAT)
     if not last_backup:
         response = "no backup yet"
     return HttpResponse(response, status=200)
