@@ -2,7 +2,7 @@ import sys
 
 from django.core.management import BaseCommand
 
-from telescoop_backup.backup import backup_database, list_saved_databases, recover_database
+from telescoop_backup.backup import backup_database, list_saved_databases, recover_database, backup_media
 
 COMMAND_HELP = """
 
@@ -36,8 +36,10 @@ class Command(BaseCommand):
         if not options["action"]:
             usage_error()
 
-        if options["action"] == "backup":
+        if options["action"] in ["backup", "backup_db"]:
             backup_database()
+        elif options["action"] == "backup_media":
+            backup_media()
         elif options["action"] == "list":
             list_saved_databases()
         elif options["action"] == "recover":

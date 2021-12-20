@@ -22,8 +22,8 @@ KEEP_N_DAYS = getattr(settings, "BACKUP_KEEP_N_DAYS", 31)
 host = getattr(settings, "BACKUP_HOST", None)
 if host is None:
     region = getattr(settings, "BACKUP_REGION", "eu-west-3")
-    host = f's3.{region}.amazonaws.com'
-LAST_BACKUP_FILE = os.path.join(settings.BASE_DIR, '.telescoop_backup_last_backup')
+    host = f"s3.{region}.amazonaws.com"
+LAST_BACKUP_FILE = os.path.join(settings.BASE_DIR, ".telescoop_backup_last_backup")
 
 
 def boto_connexion():
@@ -35,15 +35,40 @@ def boto_connexion():
     )
 
 
-def backup_file(file_path: str, remote_key: str, connexion=None):
+def backup_file(
+    file_path: str, remote_key: str, connexion=None, bucket=None, skip_if_exists=False
+):
     """Backup backup_file on third-party server."""
     if connexion is None:
         connexion = boto_connexion()
-    bucket = get_backup_bucket(connexion)
+    if bucket is None:
+        bucket = get_backup_bucket(connexion)
 
     key = Key(bucket)
+    if skip_if_exists and key.exists():
+        return
     key.key = remote_key
     key.set_contents_from_filename(file_path)
+
+
+def backup_folder(path: str, remote_path: str, connexion=None):
+    """Recursively backup entire folder. Ignores paths that were already backup up."""
+    if connexion is None:
+        connexion = boto_connexion()
+    bucket = get_backup_bucket(connexion)
+    for root, dirs, files in os.walk(path):
+        # without the dot, os.path interprets the path as absolute,
+        # so os.path.join has no effect
+        root_no_base = "." + root.split(path, 1)[1]
+        for file in files:
+            path_no_base = os.path.join(root_no_base, file)
+            dest = os.path.normpath(os.path.join(remote_path, path_no_base))
+            backup_file(
+                os.path.join(root, file),
+                dest,
+                bucket=bucket,
+                skip_if_exists=True,
+            )
 
 
 def get_backup_bucket(connexion=None):
@@ -67,14 +92,17 @@ def remove_old_database_files():
     date_format = FILE_FORMAT
 
     for backup_key in backup_keys:
-        file_date = datetime.datetime.strptime(
-            backup_key.key, date_format
-        )
+        file_date = datetime.datetime.strptime(backup_key.key, date_format)
         if (now - file_date).total_seconds() > KEEP_N_DAYS * 3600 * 24:
             print("removing old file {}".format(backup_key.key))
             bucket.delete_key(backup_key)
         else:
             print("keeping {}".format(backup_key.key))
+
+
+def backup_media():
+    media_folder = settings.MEDIA_ROOT
+    backup_folder(media_folder, "media")
 
 
 def upload_to_online_backup():
@@ -83,14 +111,14 @@ def upload_to_online_backup():
 
 
 def update_latest_backup():
-    with open(LAST_BACKUP_FILE, 'w') as fh:
+    with open(LAST_BACKUP_FILE, "w") as fh:
         fh.write(datetime.datetime.now().strftime(DATE_FORMAT))
 
 
 def get_latest_backup():
     if not os.path.isfile(LAST_BACKUP_FILE):
         return None
-    with open(LAST_BACKUP_FILE, 'r') as fh:
+    with open(LAST_BACKUP_FILE, "r") as fh:
         return datetime.datetime.strptime(fh.read().strip(), DATE_FORMAT)
 
 

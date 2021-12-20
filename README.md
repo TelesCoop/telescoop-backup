@@ -40,6 +40,7 @@ If you don't want them removed, just set a very large value for BACKUP_KEEP_N_DA
 You can now backup with the `backup_db` management command :
 
 - `python manage.py backup_db backup` to back up current database
+- `python manage.py backup_db media` to back up `settings.MEDIA_ROOT`
 - `python manage.py backup_db list` to list previous backups
 - `python manage.py backup_db recover [file_name]` to recover previous database
 
