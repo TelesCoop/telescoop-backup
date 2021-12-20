@@ -6,7 +6,7 @@ Backup your sqlite database to an S3 compatible provider.
 
 ### Configuration
 
-- Add "Telescop Auth" to your INSTALLED_APPS setting like this::
+- Add "Telescop Backup" to your INSTALLED_APPS setting like this::
 
 ```python
 INSTALLED_APPS = [
@@ -15,7 +15,7 @@ INSTALLED_APPS = [
 ]
 ```
 
-- Include the Telescop Auth URLconf in your project urls.py like this::
+- Include the Telescop Backup URLconf in your project urls.py like this::
 
 ```python
     path('backup/', include('telescoop_backup.urls')),
@@ -49,3 +49,11 @@ You can now backup with the `backup_db` management command :
 - `/backup/backup-is-less-than-XX-hours-old` answers
 `yes` (status 200) or `no` (status 500). This route can be used with a service
 such as uptimerobot.com.
+
+### Gitignore
+
+If you use it in local environment, ignore the backup files
+```
+.telescoop_backup_last_backup
+*.sqlite
+```
