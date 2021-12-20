@@ -2,7 +2,12 @@ import sys
 
 from django.core.management import BaseCommand
 
-from telescoop_backup.backup import backup_database, list_saved_databases, recover_database, backup_media
+from telescoop_backup.backup import (
+    backup_database,
+    list_saved_databases,
+    recover_database,
+    backup_media,
+)
 
 COMMAND_HELP = """
 
