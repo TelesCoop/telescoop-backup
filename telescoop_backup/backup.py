@@ -92,7 +92,11 @@ def remove_old_database_files():
     date_format = FILE_FORMAT
 
     for backup_key in backup_keys:
-        file_date = datetime.datetime.strptime(backup_key.key, date_format)
+        try:
+            file_date = datetime.datetime.strptime(backup_key.key, date_format)
+        except ValueError:
+            # is not a database backup
+            continue
         if (now - file_date).total_seconds() > KEEP_N_DAYS * 3600 * 24:
             print("removing old file {}".format(backup_key.key))
             bucket.delete_key(backup_key)
