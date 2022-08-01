@@ -102,23 +102,17 @@ def dump_database():
 def remove_old_database_files():
     """Remove files older than KEEP_N_DAYS days."""
     connexion = boto_connexion()
-    backup_keys = get_backup_keys(connexion)
+    backups = get_backups(connexion)
     bucket = get_backup_bucket(connexion)
 
     now = datetime.datetime.now()
-    date_format = FILE_FORMAT
 
-    for backup_key in backup_keys:
-        try:
-            file_date = datetime.datetime.strptime(backup_key.key, date_format)
-        except ValueError:
-            # is not a database backup
-            continue
-        if (now - file_date).total_seconds() > KEEP_N_DAYS * 3600 * 24:
-            print("removing old file {}".format(backup_key.key))
-            bucket.delete_key(backup_key)
+    for backup in backups:
+        if (now - backup["date"]).total_seconds() > KEEP_N_DAYS * 3600 * 24:
+            print("removing old file {}".format(backup['key'].key))
+            bucket.delete_key(backup['key'])
         else:
-            print("keeping {}".format(backup_key.key))
+            print("keeping {}".format(backup['key'].key))
 
 
 def backup_media():
@@ -151,10 +145,31 @@ def backup_database():
     update_latest_backup()
 
 
-def get_backup_keys(connexion=None):
-    """Return the db keys."""
+def get_backups(connexion=None):
+    """
+    Return the backups as a list of dicts.
+
+    Format:
+    {
+        "key": s3_bucket_key,
+        "date": datetime parsed from key path,
+    }
+    """
     bucket = get_backup_bucket(connexion)
-    return list(bucket.list())
+    date_format = FILE_FORMAT
+
+    backups = []
+    for backup_key in bucket.list():
+        try:
+            file_date = datetime.datetime.strptime(backup_key.key, date_format)
+        except ValueError:
+            # is not a database backup
+            continue
+        backups.append({"key": backup_key, "date": file_date})
+
+    backups = sorted(backups, key=lambda backup: backup["date"])
+
+    return backups
 
 
 def load_postgresql_dump(path):
@@ -191,16 +206,28 @@ def load_postgresql_dump(path):
     child.sendline(db_password)
 
 
-def recover_database(db_file):
-    # download latest db_file
-    bucket = get_backup_bucket()
-    key = bucket.get_key(db_file)
-    if not key:
-        raise ValueError("wrong input file db")
+def recover_database(db_file=None):
+    """
+    Replace current database with target backup.
+
+    If db_file is None or 'latest', recover latest database.
+    """
+    if db_file is None or db_file == 'latest':
+        backups = get_backups()
+        if not len(backups):
+            raise ValueError("Could not find any backup")
+        key = backups[-1]["key"]
+    else:
+        bucket = get_backup_bucket()
+        key = bucket.get_key(db_file)
+        if not key:
+            raise ValueError(f"Wrong input file db {db_file}")
+
     key.get_contents_to_filename(DATABASE_BACKUP_FILE)
 
     if IS_POSTGRES:
         load_postgresql_dump(DATABASE_BACKUP_FILE)
+        return
 
     # we now assume sqlite DB
     # copy to database file
@@ -211,11 +238,10 @@ def recover_database(db_file):
 
 def list_saved_databases():
     """Prints the backups to stdout."""
-    bucket = get_backup_bucket()
-    backup_keys = list(bucket.list())
+    backups = get_backups()
 
-    for backup_key in backup_keys:
-        print(backup_key.key)
+    for backup in backups:
+        print(backup["key"].key)
 
 
 def db_name() -> str:
