@@ -95,6 +95,7 @@ def dump_database():
         child = pexpect.spawn("/bin/bash", ["-c", shell_cmd])
         child.expect("Password:")
         child.sendline(db_password)
+        child.wait()
     else:
         subprocess.check_output(SQLITE_DUMP_COMMAND, shell=True)
 
@@ -204,6 +205,7 @@ def load_postgresql_dump(path):
     child = pexpect.spawn("/bin/bash", ["-c", shell_cmd])
     child.expect(f"Password for user {db_user}:")
     child.sendline(db_password)
+    child.wait()
 
 
 def recover_database(db_file=None):
