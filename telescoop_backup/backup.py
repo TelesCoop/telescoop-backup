@@ -16,6 +16,7 @@ DEFAULT_CONTAINER_NAME = "db-backups"
 if IS_POSTGRES:
     DATABASE_BACKUP_FILE = os.path.join(settings.BASE_DIR, "dump.sql")
     FILE_FORMAT = f"{DATE_FORMAT}_postgres_dump.sql"
+    SELECT_ALL_PUBLIC_TABLES_QUERY = """select 'drop table if exists "' || tablename || '" cascade;' from pg_tables where schemaname = 'public';"""
 else:
     db_file_path = settings.DATABASES["default"]["NAME"]
     DATABASE_BACKUP_FILE = os.path.join(os.path.dirname(db_file_path), "backup.sqlite")
@@ -156,9 +157,41 @@ def get_backup_keys(connexion=None):
     return list(bucket.list())
 
 
+def load_postgresql_dump(path):
+    import fileinput
+    import re
+    import pexpect
+    from django.db import connection
+
+    # transform dump to change owner
+    dump_file = fileinput.FileInput(path, inplace=True)
+    db_user = settings.DATABASES["default"]["USER"]
+    for line in dump_file:
+        line = re.sub(
+            "ALTER TABLE(.*)OWNER TO (.*);",
+            f"ALTER TABLE\\1OWNER TO {db_user};",
+            line.rstrip(),
+        )
+        print(line)
+
+    # list and remove all tables
+    with connection.cursor() as cursor:
+        cursor.execute(SELECT_ALL_PUBLIC_TABLES_QUERY)
+        tables = cursor.fetchall()
+        for (table,) in tables:
+            cursor.execute(table)
+
+    # load the dump
+    db_name = settings.DATABASES["default"]["NAME"]
+    db_user = settings.DATABASES["default"]["USER"]
+    db_password = settings.DATABASES["default"]["PASSWORD"]
+    shell_cmd = f"psql {db_name} -U {db_user} < {path}"
+    child = pexpect.spawn("/bin/bash", ["-c", shell_cmd])
+    child.expect(f"Password for user {db_user}:")
+    child.sendline(db_password)
+
+
 def recover_database(db_file):
-    if IS_POSTGRES:
-        raise NotImplementedError()
     # download latest db_file
     bucket = get_backup_bucket()
     key = bucket.get_key(db_file)
@@ -166,6 +199,10 @@ def recover_database(db_file):
         raise ValueError("wrong input file db")
     key.get_contents_to_filename(DATABASE_BACKUP_FILE)
 
+    if IS_POSTGRES:
+        load_postgresql_dump(DATABASE_BACKUP_FILE)
+
+    # we now assume sqlite DB
     # copy to database file
     shutil.copy(db_file_path, "db_before_recovery.sqlite")
     shutil.copy(DATABASE_BACKUP_FILE, db_file_path)
