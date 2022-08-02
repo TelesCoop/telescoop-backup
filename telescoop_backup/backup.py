@@ -91,7 +91,7 @@ def dump_database():
         db_name = settings.DATABASES["default"]["NAME"]
         db_user = settings.DATABASES["default"]["USER"]
         db_password = settings.DATABASES["default"]["PASSWORD"]
-        shell_cmd = f"pg_dump {db_name} -U {db_user} > {DATABASE_BACKUP_FILE}"
+        shell_cmd = f"pg_dump -d {db_name} -U {db_user} --inserts > {DATABASE_BACKUP_FILE}"
         child = pexpect.spawn("/bin/bash", ["-c", shell_cmd])
         child.expect("Password:")
         child.sendline(db_password)
@@ -201,7 +201,7 @@ def load_postgresql_dump(path):
     db_name = settings.DATABASES["default"]["NAME"]
     db_user = settings.DATABASES["default"]["USER"]
     db_password = settings.DATABASES["default"]["PASSWORD"]
-    shell_cmd = f"psql {db_name} -U {db_user} < {path}"
+    shell_cmd = f"psql -d {db_name} -U {db_user} < {path} &> /dev/null"
     child = pexpect.spawn("/bin/bash", ["-c", shell_cmd])
     child.expect(f"Password for user {db_user}:")
     child.sendline(db_password)
