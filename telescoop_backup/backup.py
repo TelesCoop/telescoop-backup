@@ -20,8 +20,10 @@ if IS_POSTGRES:
 else:
     db_file_path = settings.DATABASES["default"]["NAME"]
     DATABASE_BACKUP_FILE = os.path.join(os.path.dirname(db_file_path), "backup.sqlite")
-    SQLITE_DUMP_COMMAND = """sqlite3 '{source_file}' ".backup '{backup_file}'" """.format(
-        source_file=db_file_path, backup_file=DATABASE_BACKUP_FILE
+    SQLITE_DUMP_COMMAND = (
+        """sqlite3 '{source_file}' ".backup '{backup_file}'" """.format(
+            source_file=db_file_path, backup_file=DATABASE_BACKUP_FILE
+        )
     )
     FILE_FORMAT = f"{DATE_FORMAT}_db.sqlite"
 KEEP_N_DAYS = getattr(settings, "BACKUP_KEEP_N_DAYS", 31)
@@ -30,7 +32,6 @@ if host is None:
     region = getattr(settings, "BACKUP_REGION", "eu-west-3")
     host = f"s3.{region}.amazonaws.com"
 LAST_BACKUP_FILE = os.path.join(settings.BASE_DIR, ".telescoop_backup_last_backup")
-
 
 
 def boto_connexion():
@@ -88,14 +89,21 @@ def dump_database():
     """Dump the database to a file."""
     if IS_POSTGRES:
         import pexpect
+
         db_name = settings.DATABASES["default"]["NAME"]
         db_user = settings.DATABASES["default"]["USER"]
-        db_password = settings.DATABASES["default"]["PASSWORD"]
-        shell_cmd = f"pg_dump -d {db_name} -U {db_user} --inserts > {DATABASE_BACKUP_FILE}"
-        child = pexpect.spawn("/bin/bash", ["-c", shell_cmd])
-        child.expect("Password:")
-        child.sendline(db_password)
-        child.wait()
+        db_password = settings.DATABASES["default"].get("PASSWORD")
+        shell_cmd = (
+            f"pg_dump -d {db_name} -U {db_user} --inserts > {DATABASE_BACKUP_FILE}"
+        )
+
+        if db_password:
+            child = pexpect.spawn("/bin/bash", ["-c", shell_cmd])
+            child.expect("Password:")
+            child.sendline(db_password)
+            child.wait()
+        else:
+            subprocess.check_output(shell_cmd, shell=True)
     else:
         subprocess.check_output(SQLITE_DUMP_COMMAND, shell=True)
 
@@ -110,10 +118,10 @@ def remove_old_database_files():
 
     for backup in backups:
         if (now - backup["date"]).total_seconds() > KEEP_N_DAYS * 3600 * 24:
-            print("removing old file {}".format(backup['key'].key))
-            bucket.delete_key(backup['key'])
+            print("removing old file {}".format(backup["key"].key))
+            bucket.delete_key(backup["key"])
         else:
-            print("keeping {}".format(backup['key'].key))
+            print("keeping {}".format(backup["key"].key))
 
 
 def backup_media():
@@ -176,7 +184,6 @@ def get_backups(connexion=None):
 def load_postgresql_dump(path):
     import fileinput
     import re
-    import pexpect
     from django.db import connection
 
     # transform dump to change owner
@@ -200,12 +207,18 @@ def load_postgresql_dump(path):
     # load the dump
     db_name = settings.DATABASES["default"]["NAME"]
     db_user = settings.DATABASES["default"]["USER"]
-    db_password = settings.DATABASES["default"]["PASSWORD"]
+    db_password = settings.DATABASES["default"].get("PASSWORD")
     shell_cmd = f"psql -d {db_name} -U {db_user} < {path} &> /dev/null"
-    child = pexpect.spawn("/bin/bash", ["-c", shell_cmd])
-    child.expect(f"Password for user {db_user}:")
-    child.sendline(db_password)
-    child.wait()
+
+    if db_password:
+        import pexpect
+
+        child = pexpect.spawn("/bin/bash", ["-c", shell_cmd])
+        child.expect(f"Password for user {db_user}:")
+        child.sendline(db_password)
+        child.wait()
+    else:
+        subprocess.check_output(shell_cmd, shell=True)
 
 
 def recover_database(db_file=None):
@@ -214,7 +227,7 @@ def recover_database(db_file=None):
 
     If db_file is None or 'latest', recover latest database.
     """
-    if db_file is None or db_file == 'latest':
+    if db_file is None or db_file == "latest":
         backups = get_backups()
         if not len(backups):
             raise ValueError("Could not find any backup")
