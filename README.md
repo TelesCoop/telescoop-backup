@@ -28,7 +28,7 @@ BACKUP_ACCESS = 'my_access'  # S3 ACCESS
 BACKUP_SECRET = 'my_secret'  # S3 SECRET KEY
 BACKUP_BUCKET = 'my_project_backup'  # S3 Bucket
 BACKUP_KEEP_N_DAYS = 31  # Optional, defaults to 31
-BACKUP_HOST = None  # Optional, default to s3.fr-par.scw.cloud (Scaleway Storage)
+BACKUP_HOST = None  # Optional, default to s3.fr-par.scw.cloud (Scaleway Storage in Paris)
 ```
 
 By default, old backups are removed in order not to take up too much space.

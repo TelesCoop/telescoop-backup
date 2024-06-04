@@ -5,8 +5,7 @@ import subprocess
 
 from django.conf import settings
 
-import boto
-from boto.s3.key import Key
+import boto3
 
 IS_POSTGRES = "postgresql" in settings.DATABASES["default"]["ENGINE"]
 
@@ -29,57 +28,44 @@ else:
 KEEP_N_DAYS = getattr(settings, "BACKUP_KEEP_N_DAYS", 31)
 host = getattr(settings, "BACKUP_HOST", "s3.fr-par.scw.cloud")
 LAST_BACKUP_FILE = os.path.join(settings.BASE_DIR, ".telescoop_backup_last_backup")
+BUCKET = settings.BACKUP_BUCKET
 
 
-def boto_connexion():
+def boto_client():
     """Connect to AWS S3."""
-    return boto.connect_s3(
-        settings.BACKUP_ACCESS,
-        settings.BACKUP_SECRET,
-        host=host,
+    return boto3.client(
+        "s3",
+        aws_access_key_id=settings.BACKUP_ACCESS,
+        aws_secret_access_key=settings.BACKUP_SECRET,
+        endpoint_url=f"https://{host}",
     )
 
 
-def backup_file(
-    file_path: str, remote_key: str, connexion=None, bucket=None, skip_if_exists=False
-):
+def backup_file(file_path: str, remote_key: str, connexion=None, skip_if_exists=False):
     """Backup backup_file on third-party server."""
     if connexion is None:
-        connexion = boto_connexion()
-    if bucket is None:
-        bucket = get_backup_bucket(connexion)
+        connexion = boto_client()
 
-    key = Key(bucket)
-    if skip_if_exists and key.exists():
-        return
-    key.key = remote_key
-    key.set_contents_from_filename(file_path)
+    if skip_if_exists:
+        try:
+            connexion.head_object(Bucket=BUCKET, Key=remote_key)
+            return
+        except connexion.exceptions.ClientError as e:
+            if e.response["Error"]["Code"] != "404":
+                raise
+
+    connexion.upload_file(file_path, BUCKET, remote_key)
 
 
 def backup_folder(path: str, remote_path: str, connexion=None):
     """Recursively backup entire folder. Ignores paths that were already backup up."""
     if connexion is None:
-        connexion = boto_connexion()
-    bucket = get_backup_bucket(connexion)
+        connexion = boto_client()
     for root, dirs, files in os.walk(path):
-        # without the dot, os.path interprets the path as absolute,
-        # so os.path.join has no effect
-        root_no_base = "." + root.split(path, 1)[1]
         for file in files:
-            path_no_base = os.path.join(root_no_base, file)
+            path_no_base = os.path.join(root, file)
             dest = os.path.normpath(os.path.join(remote_path, path_no_base))
-            backup_file(
-                os.path.join(root, file),
-                dest,
-                bucket=bucket,
-                skip_if_exists=True,
-            )
-
-
-def get_backup_bucket(connexion=None):
-    if connexion is None:
-        connexion = boto_connexion()
-    return connexion.get_bucket(settings.BACKUP_BUCKET)
+            backup_file(path_no_base, dest, connexion=connexion, skip_if_exists=True)
 
 
 def dump_database():
@@ -107,18 +93,17 @@ def dump_database():
 
 def remove_old_database_files():
     """Remove files older than KEEP_N_DAYS days."""
-    connexion = boto_connexion()
+    connexion = boto_client()
     backups = get_backups(connexion)
-    bucket = get_backup_bucket(connexion)
 
     now = datetime.datetime.now()
 
     for backup in backups:
         if (now - backup["date"]).total_seconds() > KEEP_N_DAYS * 3600 * 24:
-            print("removing old file {}".format(backup["key"].key))
-            bucket.delete_key(backup["key"])
+            print("removing old file {}".format(backup["key"]["Key"]))
+            connexion.delete_object(Bucket=BUCKET, Key=backup["key"]["Key"])
         else:
-            print("keeping {}".format(backup["key"].key))
+            print("keeping {}".format(backup["key"]["Key"]))
 
 
 def backup_media():
@@ -152,22 +137,16 @@ def backup_database():
 
 
 def get_backups(connexion=None):
-    """
-    Return the backups as a list of dicts.
+    if connexion is None:
+        connexion = boto_client()
 
-    Format:
-    {
-        "key": s3_bucket_key,
-        "date": datetime parsed from key path,
-    }
-    """
-    bucket = get_backup_bucket(connexion)
     date_format = FILE_FORMAT
 
     backups = []
-    for backup_key in bucket.list():
+
+    for backup_key in connexion.list_objects(Bucket=BUCKET)["Contents"]:
         try:
-            file_date = datetime.datetime.strptime(backup_key.key, date_format)
+            file_date = datetime.datetime.strptime(backup_key["Key"], date_format)
         except ValueError:
             # is not a database backup
             continue
@@ -224,18 +203,20 @@ def recover_database(db_file=None):
 
     If db_file is None or 'latest', recover latest database.
     """
+    connexion = boto_client()
+
     if db_file is None or db_file == "latest":
         backups = get_backups()
         if not len(backups):
             raise ValueError("Could not find any backup")
-        key = backups[-1]["key"]
-    else:
-        bucket = get_backup_bucket()
-        key = bucket.get_key(db_file)
-        if not key:
-            raise ValueError(f"Wrong input file db {db_file}")
+        db_file = backups[-1]["key"]["Key"]
 
-    key.get_contents_to_filename(DATABASE_BACKUP_FILE)
+    key = connexion.get_object(Bucket=BUCKET, Key=db_file)
+    if not key:
+        raise ValueError(f"Wrong input file db {db_file}")
+
+    with open(DATABASE_BACKUP_FILE, "wb") as f:
+        f.write(key["Body"].read())
 
     if IS_POSTGRES:
         load_postgresql_dump(DATABASE_BACKUP_FILE)
@@ -253,7 +234,7 @@ def list_saved_databases():
     backups = get_backups()
 
     for backup in backups:
-        print(backup["key"].key)
+        print(backup["key"]["Key"])
 
 
 def db_name() -> str:
