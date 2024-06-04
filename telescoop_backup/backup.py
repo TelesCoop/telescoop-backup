@@ -26,7 +26,12 @@ else:
     )
     FILE_FORMAT = f"{DATE_FORMAT}_db.sqlite"
 KEEP_N_DAYS = getattr(settings, "BACKUP_KEEP_N_DAYS", 31)
-host = getattr(settings, "BACKUP_HOST", "s3.fr-par.scw.cloud")
+if getattr(settings, "BACKUP_USE_AWS") and (
+    region := getattr(settings, "BACKUP_REGION")
+):
+    host = f"s3.{region}.amazonaws.com"
+else:
+    host = getattr(settings, "BACKUP_HOST", "s3.fr-par.scw.cloud")
 LAST_BACKUP_FILE = os.path.join(settings.BASE_DIR, ".telescoop_backup_last_backup")
 BUCKET = settings.BACKUP_BUCKET
 
