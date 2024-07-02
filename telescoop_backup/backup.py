@@ -44,7 +44,7 @@ def boto_client():
         aws_access_key_id=settings.BACKUP_ACCESS,
         aws_secret_access_key=settings.BACKUP_SECRET,
         endpoint_url=f"https://{host}",
-        region=region,
+        region_name=region,
     )
 
 
