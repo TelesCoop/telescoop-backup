@@ -26,9 +26,8 @@ else:
     )
     FILE_FORMAT = f"{DATE_FORMAT}_db.sqlite"
 KEEP_N_DAYS = getattr(settings, "BACKUP_KEEP_N_DAYS", 31)
-if getattr(settings, "BACKUP_USE_AWS", None) and (
-    region := getattr(settings, "BACKUP_REGION", None)
-):
+region = getattr(settings, "BACKUP_REGION", None)
+if getattr(settings, "BACKUP_USE_AWS", None) and region:
     host = f"s3.{region}.amazonaws.com"
 else:
     region = region or "fr-par"
