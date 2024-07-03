@@ -26,11 +26,11 @@ else:
     )
     FILE_FORMAT = f"{DATE_FORMAT}_db.sqlite"
 KEEP_N_DAYS = getattr(settings, "BACKUP_KEEP_N_DAYS", 31)
-if getattr(settings, "BACKUP_USE_AWS", None) and (
-    region := getattr(settings, "BACKUP_REGION", None)
-):
+region = getattr(settings, "BACKUP_REGION", None)
+if getattr(settings, "BACKUP_USE_AWS", None) and region:
     host = f"s3.{region}.amazonaws.com"
 else:
+    region = region or "fr-par"
     host = getattr(settings, "BACKUP_HOST", "s3.fr-par.scw.cloud")
 LAST_BACKUP_FILE = os.path.join(settings.BASE_DIR, ".telescoop_backup_last_backup")
 BUCKET = settings.BACKUP_BUCKET
@@ -43,6 +43,7 @@ def boto_client():
         aws_access_key_id=settings.BACKUP_ACCESS,
         aws_secret_access_key=settings.BACKUP_SECRET,
         endpoint_url=f"https://{host}",
+        region_name=region,
     )
 
 
