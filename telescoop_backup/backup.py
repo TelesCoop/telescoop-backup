@@ -7,7 +7,7 @@ from django.conf import settings
 
 import boto3
 
-IS_POSTGRES = "postgresql" in settings.DATABASES["default"]["ENGINE"]
+IS_POSTGRES = any(db_type in settings.DATABASES["default"]["ENGINE"] for db_type in ["postgres", "postgis"])
 
 DATE_FORMAT = "%Y-%m-%dT%H:%M"
 DEFAULT_AUTH_VERSION = 2
