@@ -15,7 +15,6 @@ DEFAULT_CONTAINER_NAME = "db-backups"
 if IS_POSTGRES:
     COMPRESS_DATABASE_BACKUP = settings.BACKUP_COMPRESS if hasattr(settings, "BACKUP_COMPRESS") else False
     if COMPRESS_DATABASE_BACKUP:
-        BACKUP_WORKERS = settings.BACKUP_WORKERS if hasattr(settings, "BACKUP_WORKERS") else 1
         DATABASE_BACKUP_FILE = os.path.join(settings.BASE_DIR, "compress.dump")
         FILE_FORMAT = f"{DATE_FORMAT}_postgres_backup.dump"
     else:
