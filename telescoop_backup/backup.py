@@ -17,6 +17,7 @@ if IS_POSTGRES:
     if COMPRESS_DATABASE_BACKUP:
         DATABASE_BACKUP_FILE = os.path.join(settings.BASE_DIR, "compress.dump")
         FILE_FORMAT = f"{DATE_FORMAT}_postgres_backup.dump"
+        BACKUP_RECOVER_WORKER = settings.BACKUP_RECOVER_WORKER if hasattr(settings, "BACKUP_RECOVER_WORKER") else 1
     else:
         DATABASE_BACKUP_FILE = os.path.join(settings.BASE_DIR, "dump.sql")
         FILE_FORMAT = f"{DATE_FORMAT}_postgres_dump.sql"
@@ -198,7 +199,7 @@ def prepare_sql_dump(path, db_name, db_user):
     return (shell_cmd, f"Password for user {db_user}:")
 
 def prepare_compress_dump(path, db_name, db_user):
-    shell_cmd = f"pg_restore -U {db_user} -d {db_name} -v {path} -O --clean --if-exists"
+    shell_cmd = f"pg_restore -U {db_user} -d {db_name} -v {path} -O -j {BACKUP_RECOVER_WORKER} --clean --if-exists"
     return (shell_cmd, "Password:")
 
 
