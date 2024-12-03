@@ -13,8 +13,14 @@ DATE_FORMAT = "%Y-%m-%dT%H:%M"
 DEFAULT_AUTH_VERSION = 2
 DEFAULT_CONTAINER_NAME = "db-backups"
 if IS_POSTGRES:
-    DATABASE_BACKUP_FILE = os.path.join(settings.BASE_DIR, "dump.sql")
-    FILE_FORMAT = f"{DATE_FORMAT}_postgres_dump.sql"
+    COMPRESS_DATABASE_BACKUP = settings.BACKUP_COMPRESS if hasattr(settings, "BACKUP_COMPRESS") else False
+    if COMPRESS_DATABASE_BACKUP:
+        BACKUP_WORKERS = settings.BACKUP_WORKERS if hasattr(settings, "BACKUP_WORKERS") else 1
+        DATABASE_BACKUP_FILE = os.path.join(settings.BASE_DIR, "compress.dump")
+        FILE_FORMAT = f"{DATE_FORMAT}_postgres_backup.dump"
+    else:
+        DATABASE_BACKUP_FILE = os.path.join(settings.BASE_DIR, "dump.sql")
+        FILE_FORMAT = f"{DATE_FORMAT}_postgres_dump.sql"
     SELECT_ALL_PUBLIC_TABLES_QUERY = """select 'drop table if exists "' || tablename || '" cascade;' from pg_tables where schemaname = 'public';"""
 else:
     db_file_path = settings.DATABASES["default"]["NAME"]
@@ -82,9 +88,14 @@ def dump_database():
         db_name = settings.DATABASES["default"]["NAME"]
         db_user = settings.DATABASES["default"]["USER"]
         db_password = settings.DATABASES["default"].get("PASSWORD")
-        shell_cmd = (
-            f"pg_dump -d {db_name} -U {db_user} --inserts > {DATABASE_BACKUP_FILE}"
-        )
+        if COMPRESS_DATABASE_BACKUP:
+            shell_cmd = (
+                f"pg_dump -U {db_user} -d {db_name} -F c --no-acl -f {DATABASE_BACKUP_FILE}"
+            )
+        else:
+            shell_cmd = (
+                f"pg_dump -d {db_name} -U {db_user} --inserts > {DATABASE_BACKUP_FILE}"
+            )
 
         if db_password:
             child = pexpect.spawn("/bin/bash", ["-c", shell_cmd])
@@ -162,15 +173,13 @@ def get_backups(connexion=None):
 
     return backups
 
-
-def load_postgresql_dump(path):
+def load_sql_dump(path, db_name, db_user):
     import fileinput
     import re
     from django.db import connection
 
     # transform dump to change owner
     dump_file = fileinput.FileInput(path, inplace=True)
-    db_user = settings.DATABASES["default"]["USER"]
     for line in dump_file:
         line = re.sub(
             "ALTER TABLE(.*)OWNER TO (.*);",
@@ -186,17 +195,26 @@ def load_postgresql_dump(path):
         for (table,) in tables:
             cursor.execute(table)
 
+    shell_cmd = f"psql -d {db_name} -U {db_user} < {path} &> /dev/null"
+    return (shell_cmd, f"Password for user {db_user}:")
+
+def load_compress_dump(path, db_name, db_user):
+    shell_cmd = f"pg_restore -U {db_user} -d {db_name} -v {path} -O --clean"
+    return (shell_cmd, "Password:")
+
+
+def load_postgresql_dump(path):
     # load the dump
     db_name = settings.DATABASES["default"]["NAME"]
     db_user = settings.DATABASES["default"]["USER"]
     db_password = settings.DATABASES["default"].get("PASSWORD")
-    shell_cmd = f"psql -d {db_name} -U {db_user} < {path} &> /dev/null"
 
+    shell_cmd, expected_text =  load_compress_dump(path, db_name, db_user) if COMPRESS_DATABASE_BACKUP else load_sql_dump(path, db_name, db_user)
     if db_password:
         import pexpect
 
         child = pexpect.spawn("/bin/bash", ["-c", shell_cmd])
-        child.expect(f"Password for user {db_user}:")
+        child.expect(expected_text)
         child.sendline(db_password)
         child.wait()
     else:
@@ -221,8 +239,7 @@ def recover_database(db_file=None):
     if not key:
         raise ValueError(f"Wrong input file db {db_file}")
 
-    with open(DATABASE_BACKUP_FILE, "wb") as f:
-        f.write(key["Body"].read())
+    connexion.download_file(Bucket=BUCKET, Key=db_file, Filename=DATABASE_BACKUP_FILE)
 
     if IS_POSTGRES:
         load_postgresql_dump(DATABASE_BACKUP_FILE)
