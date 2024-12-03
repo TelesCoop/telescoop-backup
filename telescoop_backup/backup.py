@@ -13,7 +13,7 @@ DATE_FORMAT = "%Y-%m-%dT%H:%M"
 DEFAULT_AUTH_VERSION = 2
 DEFAULT_CONTAINER_NAME = "db-backups"
 if IS_POSTGRES:
-    COMPRESS_DATABASE_BACKUP = settings.BACKUP_COMPRESS if hasattr(settings, "BACKUP_COMPRESS") else False
+    COMPRESS_DATABASE_BACKUP = getattr(settings, "BACKUP_COMPRESS", False)
     if COMPRESS_DATABASE_BACKUP:
         DATABASE_BACKUP_FILE = os.path.join(settings.BASE_DIR, "compress.dump")
         FILE_FORMAT = f"{DATE_FORMAT}_postgres_backup.dump"
@@ -199,7 +199,7 @@ def prepare_sql_dump(path, db_name, db_user):
     return (shell_cmd, f"Password for user {db_user}:")
 
 def prepare_compress_dump(path, db_name, db_user):
-    shell_cmd = f"pg_restore -U {db_user} -d {db_name} -v {path} -O -j {BACKUP_RECOVER_WORKER} --clean --if-exists"
+    shell_cmd = f"pg_restore -U {db_user} --dbname {db_name} -v {path} --jobs {BACKUP_RECOVER_WORKER} --clean --if-exists --no-owner --role={db_user}"
     return (shell_cmd, "Password:")
 
 
@@ -209,7 +209,10 @@ def load_postgresql_dump(path):
     db_user = settings.DATABASES["default"]["USER"]
     db_password = settings.DATABASES["default"].get("PASSWORD")
 
-    shell_cmd, expected_text =  prepare_compress_dump(path, db_name, db_user) if COMPRESS_DATABASE_BACKUP else prepare_sql_dump(path, db_name, db_user)
+    if COMPRESS_DATABASE_BACKUP:
+        shell_cmd, expected_text = prepare_compress_dump(path, db_name, db_user)
+    else:
+        shell_cmd, expected_text = prepare_sql_dump(path, db_name, db_user)
 
     print("command:", shell_cmd)
 
