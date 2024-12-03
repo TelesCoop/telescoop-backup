@@ -198,7 +198,7 @@ def prepare_sql_dump(path, db_name, db_user):
     return (shell_cmd, f"Password for user {db_user}:")
 
 def prepare_compress_dump(path, db_name, db_user):
-    shell_cmd = f"pg_restore -U {db_user} -d {db_name} -v {path} -O --clean"
+    shell_cmd = f"pg_restore -U {db_user} -d {db_name} -v {path} -O --clean --if-exists"
     return (shell_cmd, "Password:")
 
 
@@ -209,6 +209,9 @@ def load_postgresql_dump(path):
     db_password = settings.DATABASES["default"].get("PASSWORD")
 
     shell_cmd, expected_text =  prepare_compress_dump(path, db_name, db_user) if COMPRESS_DATABASE_BACKUP else prepare_sql_dump(path, db_name, db_user)
+
+    print("command:", shell_cmd)
+
     if db_password:
         import pexpect
 
