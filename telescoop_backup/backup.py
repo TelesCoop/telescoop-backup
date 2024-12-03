@@ -173,7 +173,7 @@ def get_backups(connexion=None):
 
     return backups
 
-def load_sql_dump(path, db_name, db_user):
+def prepare_sql_dump(path, db_name, db_user):
     import fileinput
     import re
     from django.db import connection
@@ -198,7 +198,7 @@ def load_sql_dump(path, db_name, db_user):
     shell_cmd = f"psql -d {db_name} -U {db_user} < {path} &> /dev/null"
     return (shell_cmd, f"Password for user {db_user}:")
 
-def load_compress_dump(path, db_name, db_user):
+def prepare_compress_dump(path, db_name, db_user):
     shell_cmd = f"pg_restore -U {db_user} -d {db_name} -v {path} -O --clean"
     return (shell_cmd, "Password:")
 
@@ -209,7 +209,7 @@ def load_postgresql_dump(path):
     db_user = settings.DATABASES["default"]["USER"]
     db_password = settings.DATABASES["default"].get("PASSWORD")
 
-    shell_cmd, expected_text =  load_compress_dump(path, db_name, db_user) if COMPRESS_DATABASE_BACKUP else load_sql_dump(path, db_name, db_user)
+    shell_cmd, expected_text =  prepare_compress_dump(path, db_name, db_user) if COMPRESS_DATABASE_BACKUP else prepare_sql_dump(path, db_name, db_user)
     if db_password:
         import pexpect
 
