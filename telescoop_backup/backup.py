@@ -17,7 +17,7 @@ if IS_POSTGRES:
     if COMPRESS_DATABASE_BACKUP:
         DATABASE_BACKUP_FILE = os.path.join(settings.BASE_DIR, "compress.dump")
         FILE_FORMAT = f"{DATE_FORMAT}_postgres_backup.dump"
-        BACKUP_RECOVER_N_WORKERS = getint(settings, "BACKUP_RECOVER_N_WORKERS", 1)
+        BACKUP_RECOVER_N_WORKERS = getattr(settings, "BACKUP_RECOVER_N_WORKERS", 1)
     else:
         DATABASE_BACKUP_FILE = os.path.join(settings.BASE_DIR, "dump.sql")
         FILE_FORMAT = f"{DATE_FORMAT}_postgres_dump.sql"
