@@ -76,7 +76,7 @@ def backup_folder(path: str, remote_path: str, connexion=None):
     for root, dirs, files in os.walk(path):
         for file in files:
             path_no_base = os.path.join(root, file)
-            dest = os.path.normpath(os.path.join(remote_path, path_no_base))
+            dest = f"{remote_path}/{os.path.relpath(path_no_base, start=path)}"
             backup_file(path_no_base, dest, connexion=connexion, skip_if_exists=True)
 
 
