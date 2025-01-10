@@ -6,7 +6,11 @@ from telescoop_backup.backup import (
     backup_database,
     list_saved_databases,
     recover_database,
-    backup_media, backup_database_and_media, recover_database_and_media, backup_zipped_media, list_saved_zipped_media,
+    backup_media,
+    backup_database_and_media,
+    recover_database_and_media,
+    backup_zipped_media,
+    list_saved_zipped_media,
     recover_zipped_media,
 )
 
@@ -48,7 +52,7 @@ class Command(BaseCommand):
         )
         parser.add_argument(
             "--zipped",
-            action='store_true',
+            action="store_true",
             help="use this to have zipped media files",
         )
 
