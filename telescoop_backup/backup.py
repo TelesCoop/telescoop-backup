@@ -82,7 +82,7 @@ def backup_folder(path: str, remote_path: str, connexion=None):
     number_of_files = sum([len(files) for root, dirs, files in all_files])
     if number_of_files > 100:
         print(
-            "Warning: you are about to backup a large number of files. We recommend you to use zip option."
+            "Warning: you are about to backup a large number of files. We recommend you to use `--zipped` option."
         )
     for root, dirs, files in all_files:
         for file in files:
