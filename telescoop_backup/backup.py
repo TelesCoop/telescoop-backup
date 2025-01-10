@@ -71,7 +71,6 @@ def backup_file(file_path: str, remote_key: str, connexion=None, skip_if_exists=
         except connexion.exceptions.ClientError as e:
             if e.response["Error"]["Code"] != "404":
                 raise
-    print(f"uploading {remote_key} to online backup")
     connexion.upload_file(file_path, BUCKET, remote_key)
 
 
@@ -79,7 +78,13 @@ def backup_folder(path: str, remote_path: str, connexion=None):
     """Recursively backup entire folder. Ignores paths that were already backup up."""
     if connexion is None:
         connexion = boto_client()
-    for root, dirs, files in os.walk(path):
+    all_files = os.walk(path)
+    number_of_files = sum([len(files) for root, dirs, files in all_files])
+    if number_of_files > 100:
+        print(
+            "Warning: you are about to backup a large number of files. We recommend you to use zip option."
+        )
+    for root, dirs, files in all_files:
         for file in files:
             path_no_base = os.path.join(root, file)
             dest = os.path.join(remote_path, os.path.relpath(path_no_base, start=path))
