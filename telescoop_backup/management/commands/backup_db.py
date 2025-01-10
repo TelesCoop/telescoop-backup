@@ -69,7 +69,7 @@ class Command(BaseCommand):
             else:
                 backup_media()
         elif options["action"] == "backup_db_and_media":
-            backup_database_and_media()
+            backup_database_and_media(zipped=is_zipped)
         elif options["action"] == "list":
             list_saved_databases()
         elif options["action"] == "list_media":

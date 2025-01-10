@@ -8,7 +8,10 @@ from django.conf import settings
 
 import boto3
 
-IS_POSTGRES = any(db_type in settings.DATABASES["default"]["ENGINE"] for db_type in ["postgres", "postgis"])
+IS_POSTGRES = any(
+    db_type in settings.DATABASES["default"]["ENGINE"]
+    for db_type in ["postgres", "postgis"]
+)
 
 DATE_FORMAT = "%Y-%m-%dT%H:%M"
 DEFAULT_AUTH_VERSION = 2
@@ -92,9 +95,7 @@ def dump_database():
         db_user = settings.DATABASES["default"]["USER"]
         db_password = settings.DATABASES["default"].get("PASSWORD")
         if COMPRESS_DATABASE_BACKUP:
-            shell_cmd = (
-                f"pg_dump -U {db_user} -d {db_name} -F c --no-acl -f {DATABASE_BACKUP_FILE}"
-            )
+            shell_cmd = f"pg_dump -U {db_user} -d {db_name} -F c --no-acl -f {DATABASE_BACKUP_FILE}"
         else:
             shell_cmd = (
                 f"pg_dump -d {db_name} -U {db_user} --inserts > {DATABASE_BACKUP_FILE}"
@@ -130,6 +131,7 @@ def backup_media():
     media_folder = settings.MEDIA_ROOT
     backup_folder(media_folder, "media")
 
+
 def backup_zipped_media(date=None):
     media_folder = settings.MEDIA_ROOT
     filename, extension = ZIPPED_BACKUP_FILE.split(".")
@@ -156,15 +158,21 @@ def recover_zipped_media(file_name=None):
     shutil.unpack_archive(ZIPPED_BACKUP_FILE, settings.MEDIA_ROOT)
     os.remove(ZIPPED_BACKUP_FILE)
 
-def backup_database_and_media():
+
+def backup_database_and_media(zipped=True):
     date = datetime.datetime.now()
     backup_database(date)
-    backup_zipped_media(date)
+    if zipped:
+        backup_zipped_media(date)
+    else:
+        backup_media()
+
 
 def recover_database_and_media(timestamp):
     date = datetime.datetime.strptime(timestamp, DATE_FORMAT)
     recover_database(date)
     recover_zipped_media(date)
+
 
 def upload_to_online_backup(date=None):
     """Upload the database file online."""
@@ -218,6 +226,7 @@ def get_backups(connexion=None, date_format=FILE_FORMAT):
 
     return backups
 
+
 def prepare_sql_dump(path, db_name, db_user):
     import fileinput
     import re
@@ -242,6 +251,7 @@ def prepare_sql_dump(path, db_name, db_user):
 
     shell_cmd = f"psql -d {db_name} -U {db_user} < {path} &> /dev/null"
     return (shell_cmd, f"Password for user {db_user}:")
+
 
 def prepare_compress_dump(path, db_name, db_user):
     shell_cmd = f"pg_restore -U {db_user} --dbname {db_name} -v {path} --jobs {BACKUP_RECOVER_N_WORKERS} --clean --if-exists --no-owner --role={db_user}"
@@ -302,22 +312,27 @@ def recover_database(db_file=None):
     shutil.copy(DATABASE_BACKUP_FILE, db_file_path)
     os.remove(DATABASE_BACKUP_FILE)
 
+
 def list_backup(date_format):
     backups = get_backups(date_format=date_format)
 
     for backup in backups:
         print(backup["key"]["Key"])
 
+
 def list_saved_databases():
     list_backup(date_format=FILE_FORMAT)
 
+
 def list_saved_zipped_media():
     list_backup(date_format=ZIPPED_MEDIA_FILE_FORMAT)
+
 
 def db_name(date=None) -> str:
     if date is None:
         date = datetime.datetime.now()
     return date.strftime(FILE_FORMAT)
+
 
 def zipped_media_file_name(date=None) -> str:
     if date is None:
