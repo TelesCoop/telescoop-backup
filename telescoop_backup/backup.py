@@ -2,6 +2,7 @@ import datetime
 import os
 import shutil
 import subprocess
+import re
 
 from django.conf import settings
 
@@ -31,6 +32,8 @@ else:
         )
     )
     FILE_FORMAT = f"{DATE_FORMAT}_db.sqlite"
+ZIPPED_BACKUP_FILE = os.path.join(settings.BASE_DIR, "media.zip")
+ZIPPED_MEDIA_FILE_FORMAT = f"{DATE_FORMAT}_media.zip"
 KEEP_N_DAYS = getattr(settings, "BACKUP_KEEP_N_DAYS", 31)
 region = getattr(settings, "BACKUP_REGION", None)
 if getattr(settings, "BACKUP_USE_AWS", None) and region:
@@ -65,7 +68,7 @@ def backup_file(file_path: str, remote_key: str, connexion=None, skip_if_exists=
         except connexion.exceptions.ClientError as e:
             if e.response["Error"]["Code"] != "404":
                 raise
-
+    print(f"uploading {remote_key} to online backup")
     connexion.upload_file(file_path, BUCKET, remote_key)
 
 
@@ -127,10 +130,45 @@ def backup_media():
     media_folder = settings.MEDIA_ROOT
     backup_folder(media_folder, "media")
 
+def backup_zipped_media(date=None):
+    media_folder = settings.MEDIA_ROOT
+    filename, extension = ZIPPED_BACKUP_FILE.split(".")
+    shutil.make_archive(filename, extension, media_folder)
 
-def upload_to_online_backup():
+    backup_file(ZIPPED_BACKUP_FILE, zipped_media_file_name(date))
+    os.remove(ZIPPED_BACKUP_FILE)
+
+
+def recover_zipped_media(file_name=None):
+    connexion = boto_client()
+    if file_name is None or file_name == "latest":
+        backups = get_backups(connexion, ZIPPED_MEDIA_FILE_FORMAT)
+        if not len(backups):
+            raise ValueError("Could not find any media backup")
+        file_name = backups[-1]["key"]["Key"]
+
+    key = connexion.get_object(Bucket=BUCKET, Key=file_name)
+    if not key:
+        raise ValueError(f"Wrong input file db {file_name}")
+
+    connexion.download_file(Bucket=BUCKET, Key=file_name, Filename=ZIPPED_BACKUP_FILE)
+
+    shutil.unpack_archive(ZIPPED_BACKUP_FILE, settings.MEDIA_ROOT)
+    os.remove(ZIPPED_BACKUP_FILE)
+
+def backup_database_and_media():
+    date = datetime.datetime.now()
+    backup_database(date)
+    backup_zipped_media(date)
+
+def recover_database_and_media(timestamp):
+    date = datetime.datetime.strptime(timestamp, DATE_FORMAT)
+    recover_database(date)
+    recover_zipped_media(date)
+
+def upload_to_online_backup(date=None):
     """Upload the database file online."""
-    backup_file(file_path=DATABASE_BACKUP_FILE, remote_key=db_name())
+    backup_file(file_path=DATABASE_BACKUP_FILE, remote_key=db_name(date))
 
 
 def update_latest_backup():
@@ -145,23 +183,30 @@ def get_latest_backup():
         return datetime.datetime.strptime(fh.read().strip(), DATE_FORMAT)
 
 
-def backup_database():
+def backup_database(date=None):
     """Main function."""
     dump_database()
-    upload_to_online_backup()
+    upload_to_online_backup(date)
     remove_old_database_files()
     update_latest_backup()
 
 
-def get_backups(connexion=None):
+def delete_files(connexion=None, file_regex=None):
     if connexion is None:
         connexion = boto_client()
 
-    date_format = FILE_FORMAT
+    regex = re.compile(file_regex)
+    for backup_key in connexion.list_objects_v2(Bucket=BUCKET)["Contents"]:
+        if regex.match(backup_key["Key"]):
+            connexion.delete_object(Bucket=BUCKET, Key=backup_key["Key"])
 
+
+def get_backups(connexion=None, date_format=FILE_FORMAT):
+    if connexion is None:
+        connexion = boto_client()
     backups = []
 
-    for backup_key in connexion.list_objects(Bucket=BUCKET)["Contents"]:
+    for backup_key in connexion.list_objects_v2(Bucket=BUCKET)["Contents"]:
         try:
             file_date = datetime.datetime.strptime(backup_key["Key"], date_format)
         except ValueError:
@@ -257,14 +302,24 @@ def recover_database(db_file=None):
     shutil.copy(DATABASE_BACKUP_FILE, db_file_path)
     os.remove(DATABASE_BACKUP_FILE)
 
-
-def list_saved_databases():
-    """Prints the backups to stdout."""
-    backups = get_backups()
+def list_backup(date_format):
+    backups = get_backups(date_format=date_format)
 
     for backup in backups:
         print(backup["key"]["Key"])
 
+def list_saved_databases():
+    list_backup(date_format=FILE_FORMAT)
 
-def db_name() -> str:
-    return datetime.datetime.now().strftime(FILE_FORMAT)
+def list_saved_zipped_media():
+    list_backup(date_format=ZIPPED_MEDIA_FILE_FORMAT)
+
+def db_name(date=None) -> str:
+    if date is None:
+        date = datetime.datetime.now()
+    return date.strftime(FILE_FORMAT)
+
+def zipped_media_file_name(date=None) -> str:
+    if date is None:
+        date = datetime.datetime.now()
+    return date.strftime(ZIPPED_MEDIA_FILE_FORMAT)
