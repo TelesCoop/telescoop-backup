@@ -2,12 +2,16 @@ import datetime
 import os
 import shutil
 import subprocess
+import re
 
 from django.conf import settings
 
 import boto3
 
-IS_POSTGRES = any(db_type in settings.DATABASES["default"]["ENGINE"] for db_type in ["postgres", "postgis"])
+IS_POSTGRES = any(
+    db_type in settings.DATABASES["default"]["ENGINE"]
+    for db_type in ["postgres", "postgis"]
+)
 
 DATE_FORMAT = "%Y-%m-%dT%H:%M"
 DEFAULT_AUTH_VERSION = 2
@@ -31,6 +35,8 @@ else:
         )
     )
     FILE_FORMAT = f"{DATE_FORMAT}_db.sqlite"
+ZIPPED_BACKUP_FILE = os.path.join(settings.BASE_DIR, "media.zip")
+ZIPPED_MEDIA_FILE_FORMAT = f"{DATE_FORMAT}_media.zip"
 KEEP_N_DAYS = getattr(settings, "BACKUP_KEEP_N_DAYS", 31)
 region = getattr(settings, "BACKUP_REGION", None)
 if getattr(settings, "BACKUP_USE_AWS", None) and region:
@@ -65,7 +71,6 @@ def backup_file(file_path: str, remote_key: str, connexion=None, skip_if_exists=
         except connexion.exceptions.ClientError as e:
             if e.response["Error"]["Code"] != "404":
                 raise
-
     connexion.upload_file(file_path, BUCKET, remote_key)
 
 
@@ -73,6 +78,11 @@ def backup_folder(path: str, remote_path: str, connexion=None):
     """Recursively backup entire folder. Ignores paths that were already backup up."""
     if connexion is None:
         connexion = boto_client()
+    number_of_files = sum([len(files) for root, dirs, files in os.walk(path)])
+    if number_of_files > 100:
+        print(
+            "Warning: you are about to backup a large number of files. You may want to use --zipped option."
+        )
     for root, dirs, files in os.walk(path):
         for file in files:
             path_no_base = os.path.join(root, file)
@@ -89,9 +99,7 @@ def dump_database():
         db_user = settings.DATABASES["default"]["USER"]
         db_password = settings.DATABASES["default"].get("PASSWORD")
         if COMPRESS_DATABASE_BACKUP:
-            shell_cmd = (
-                f"pg_dump -U {db_user} -d {db_name} -F c --no-acl -f {DATABASE_BACKUP_FILE}"
-            )
+            shell_cmd = f"pg_dump -U {db_user} -d {db_name} -F c --no-acl -f {DATABASE_BACKUP_FILE}"
         else:
             shell_cmd = (
                 f"pg_dump -d {db_name} -U {db_user} --inserts > {DATABASE_BACKUP_FILE}"
@@ -128,9 +136,51 @@ def backup_media():
     backup_folder(media_folder, "media")
 
 
-def upload_to_online_backup():
+def backup_zipped_media(date=None):
+    media_folder = settings.MEDIA_ROOT
+    filename, extension = ZIPPED_BACKUP_FILE.split(".")
+    shutil.make_archive(filename, extension, media_folder)
+
+    backup_file(ZIPPED_BACKUP_FILE, zipped_media_file_name(date))
+    os.remove(ZIPPED_BACKUP_FILE)
+
+
+def recover_zipped_media(file_name=None):
+    connexion = boto_client()
+    if file_name is None or file_name == "latest":
+        backups = get_backups(connexion, ZIPPED_MEDIA_FILE_FORMAT)
+        if not len(backups):
+            raise ValueError("Could not find any media backup")
+        file_name = backups[-1]["key"]["Key"]
+
+    key = connexion.get_object(Bucket=BUCKET, Key=file_name)
+    if not key:
+        raise ValueError(f"Wrong input file db {file_name}")
+
+    connexion.download_file(Bucket=BUCKET, Key=file_name, Filename=ZIPPED_BACKUP_FILE)
+
+    shutil.unpack_archive(ZIPPED_BACKUP_FILE, settings.MEDIA_ROOT)
+    os.remove(ZIPPED_BACKUP_FILE)
+
+
+def backup_database_and_media(zipped_media=True):
+    date = datetime.datetime.now()
+    backup_database(date)
+    if zipped:
+        backup_zipped_media(date)
+    else:
+        backup_media()
+
+
+def recover_database_and_media(timestamp):
+    date = datetime.datetime.strptime(timestamp, DATE_FORMAT)
+    recover_database(date)
+    recover_zipped_media(date)
+
+
+def upload_to_online_backup(date=None):
     """Upload the database file online."""
-    backup_file(file_path=DATABASE_BACKUP_FILE, remote_key=db_name())
+    backup_file(file_path=DATABASE_BACKUP_FILE, remote_key=db_name(date))
 
 
 def update_latest_backup():
@@ -145,23 +195,30 @@ def get_latest_backup():
         return datetime.datetime.strptime(fh.read().strip(), DATE_FORMAT)
 
 
-def backup_database():
+def backup_database(date=None):
     """Main function."""
     dump_database()
-    upload_to_online_backup()
+    upload_to_online_backup(date)
     remove_old_database_files()
     update_latest_backup()
 
 
-def get_backups(connexion=None):
+def delete_files(connexion=None, file_regex=None):
     if connexion is None:
         connexion = boto_client()
 
-    date_format = FILE_FORMAT
+    regex = re.compile(file_regex)
+    for backup_key in connexion.list_objects_v2(Bucket=BUCKET)["Contents"]:
+        if regex.match(backup_key["Key"]):
+            connexion.delete_object(Bucket=BUCKET, Key=backup_key["Key"])
 
+
+def get_backups(connexion=None, date_format=FILE_FORMAT):
+    if connexion is None:
+        connexion = boto_client()
     backups = []
 
-    for backup_key in connexion.list_objects(Bucket=BUCKET)["Contents"]:
+    for backup_key in connexion.list_objects_v2(Bucket=BUCKET)["Contents"]:
         try:
             file_date = datetime.datetime.strptime(backup_key["Key"], date_format)
         except ValueError:
@@ -172,6 +229,7 @@ def get_backups(connexion=None):
     backups = sorted(backups, key=lambda backup: backup["date"])
 
     return backups
+
 
 def prepare_sql_dump(path, db_name, db_user):
     import fileinput
@@ -197,6 +255,7 @@ def prepare_sql_dump(path, db_name, db_user):
 
     shell_cmd = f"psql -d {db_name} -U {db_user} < {path} &> /dev/null"
     return (shell_cmd, f"Password for user {db_user}:")
+
 
 def prepare_compress_dump(path, db_name, db_user):
     shell_cmd = f"pg_restore -U {db_user} --dbname {db_name} -v {path} --jobs {BACKUP_RECOVER_N_WORKERS} --clean --if-exists --no-owner --role={db_user}"
@@ -258,13 +317,28 @@ def recover_database(db_file=None):
     os.remove(DATABASE_BACKUP_FILE)
 
 
-def list_saved_databases():
-    """Prints the backups to stdout."""
-    backups = get_backups()
+def list_backup(date_format):
+    backups = get_backups(date_format=date_format)
 
     for backup in backups:
         print(backup["key"]["Key"])
 
 
-def db_name() -> str:
-    return datetime.datetime.now().strftime(FILE_FORMAT)
+def list_saved_databases():
+    list_backup(date_format=FILE_FORMAT)
+
+
+def list_saved_zipped_media():
+    list_backup(date_format=ZIPPED_MEDIA_FILE_FORMAT)
+
+
+def db_name(date=None) -> str:
+    if date is None:
+        date = datetime.datetime.now()
+    return date.strftime(FILE_FORMAT)
+
+
+def zipped_media_file_name(date=None) -> str:
+    if date is None:
+        date = datetime.datetime.now()
+    return date.strftime(ZIPPED_MEDIA_FILE_FORMAT)
