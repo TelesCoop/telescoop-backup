@@ -17,13 +17,20 @@ from telescoop_backup.backup import (
 COMMAND_HELP = """
 
 usage:
-     `python backup_database.py backup`
+     `python backup_db.py backup`
          to back up current db
-  or `python backup_database.py list`
+  or `python backup_db backup_db_and_media
+         to back up current db with the media
+  or `python backup_db backup_media --zipped
+         to back up current media in a zipped file
+  or `python backup_db.py list`
          to list already backed up files
-  or `python backup_database.py recover xx_db@YYYY-MM-DDTHH:MM.sqlite`
+  or `python backup_db.py recover xx_db@YYYY-MM-DDTHH:MM.sqlite`
          to recover from specific file
-
+  or `python backup_db.py recover_media
+         to recover the media
+  or `python backup_db.py recover_db_and_media
+         to recover the media and the db
 """
 
 
@@ -43,6 +50,11 @@ class Command(BaseCommand):
             "file",
             nargs="?",
             help="if action is `recover`, name of file to recover from",
+        )
+        parser.add_argument(
+            "file_media",
+            nargs="?",
+            help="if action is `recover_media`, name of the file_media to recover from",
         )
 
         parser.add_argument(
@@ -69,7 +81,7 @@ class Command(BaseCommand):
             else:
                 backup_media()
         elif options["action"] == "backup_db_and_media":
-            backup_database_and_media(zipped=is_zipped)
+            backup_database_and_media(zipped_media=is_zipped)
         elif options["action"] == "list":
             list_saved_databases()
         elif options["action"] == "list_media":
@@ -83,14 +95,15 @@ class Command(BaseCommand):
             db_file = sys.argv[3]
             recover_database(db_file)
         elif options["action"] == "recover_media":
-            file = options.get("file")
+            file_media = options.get("file_media")
             if is_zipped:
-                recover_zipped_media(file)
+                recover_zipped_media(file_media)
             else:
                 self.not_implemented()
         elif options["action"] == "recover_db_and_media":
-            timestamp = options.get("timestamp")
-            recover_database_and_media(timestamp)
+            file_media = options.get("file_media")
+            db_file = options.get("file")
+            recover_database_and_media(file_media, db_file)
         else:
             usage_error()
 

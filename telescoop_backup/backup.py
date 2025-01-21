@@ -166,16 +166,15 @@ def recover_zipped_media(file_name=None):
 def backup_database_and_media(zipped_media=True):
     date = datetime.datetime.now()
     backup_database(date)
-    if zipped:
+    if zipped_media:
         backup_zipped_media(date)
     else:
         backup_media()
 
 
-def recover_database_and_media(timestamp):
-    date = datetime.datetime.strptime(timestamp, DATE_FORMAT)
-    recover_database(date)
-    recover_zipped_media(date)
+def recover_database_and_media(file_name=None, db_file=None):
+    recover_database(db_file)
+    recover_zipped_media(file_name)
 
 
 def upload_to_online_backup(date=None):
@@ -281,7 +280,7 @@ def load_postgresql_dump(path):
         child = pexpect.spawn("/bin/bash", ["-c", shell_cmd])
         child.expect(expected_text)
         child.sendline(db_password)
-        child.wait()
+        child.expect(pexpect.EOF, timeout=None) # pg_restore is terminating silently
     else:
         subprocess.check_output(shell_cmd, shell=True)
 
