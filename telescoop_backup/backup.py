@@ -7,6 +7,7 @@ import re
 from django.conf import settings
 
 import boto3
+from botocore.exceptions import ClientError
 
 IS_POSTGRES = any(
     db_type in settings.DATABASES["default"]["ENGINE"]
@@ -124,11 +125,14 @@ def remove_old_database_files():
     now = datetime.datetime.now()
 
     for backup in backups:
-        if (now - backup["date"]).total_seconds() > KEEP_N_DAYS * 3600 * 24:
-            print("removing old file {}".format(backup["key"]["Key"]))
-            connexion.delete_object(Bucket=BUCKET, Key=backup["key"]["Key"])
-        else:
-            print("keeping {}".format(backup["key"]["Key"]))
+        try:
+            if (now - backup["date"]).total_seconds() > KEEP_N_DAYS * 3600 * 24:
+                print("removing old file {}".format(backup["key"]["Key"]))
+                connexion.delete_object(Bucket=BUCKET, Key=backup["key"]["Key"])
+            else:
+                print("keeping {}".format(backup["key"]["Key"]))
+        except ClientError:
+            print("error removing {}, ignoring".format(backup["key"]["Key"]))
 
 
 def backup_media():
@@ -280,7 +284,7 @@ def load_postgresql_dump(path):
         child = pexpect.spawn("/bin/bash", ["-c", shell_cmd])
         child.expect(expected_text)
         child.sendline(db_password)
-        child.expect(pexpect.EOF, timeout=None) # pg_restore is terminating silently
+        child.expect(pexpect.EOF, timeout=None)  # pg_restore is terminating silently
     else:
         subprocess.check_output(shell_cmd, shell=True)
 
