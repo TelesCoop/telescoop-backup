@@ -1,6 +1,7 @@
 import sys
 
 from django.core.management import BaseCommand
+from django.conf import settings
 
 from telescoop_backup.backup import (
     backup_database,
@@ -68,7 +69,7 @@ class Command(BaseCommand):
             help="use this to have zipped media files",
         )
 
-    def handle(self, *args, **options):
+    def _handle_internal(self, *args, **options):
         if not options["action"]:
             usage_error()
 
@@ -106,6 +107,26 @@ class Command(BaseCommand):
             recover_database_and_media(file_media, db_file)
         else:
             usage_error()
+
+    def handle(self, *args, **options):
+        has_rollbar = 'ROLLBAR' in settings
+        if not has_rollbar:
+            self._handle_internal(args, options)
+        else:
+            ROLLBAR = settings['ROLLBAR']
+            import rollbar
+
+            try:
+                if not getattr(rollbar, "_initialized", False):
+                    rollbar.init(**ROLLBAR)
+            except Exception:
+                rollbar.init(**ROLLBAR)
+
+            try:
+                self._handle_internal(args, options)
+            except Exception as e:
+                rollbar.report_exc_info()
+                raise e
 
 
 def usage_error():
