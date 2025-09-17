@@ -12,6 +12,8 @@ from telescoop_backup.backup import (
     backup_zipped_media,
     list_saved_zipped_media,
     recover_zipped_media,
+    security_backup,
+    restore_security_backup,
 )
 
 COMMAND_HELP = """
@@ -19,8 +21,8 @@ COMMAND_HELP = """
 usage:
      `python backup_db.py backup`
          to back up current db
-  or `python backup_db backup_db_and_media
-         to back up current db with the media
+  or `python backup_db backup_db_and_media [--overwrite]
+         to back up current db with the media (optionally with --overwrite to overwrite existing files)
   or `python backup_db backup_media --zipped
          to back up current media in a zipped file
   or `python backup_db.py list`
@@ -31,6 +33,10 @@ usage:
          to recover the media
   or `python backup_db.py recover_db_and_media
          to recover the media and the db
+  or `python backup_db.py security_backup [--overwrite]
+         to create a security backup (optionally with --overwrite to overwrite existing files)
+  or `python backup_db.py restore_security_backup [--overwrite]
+         to restore files from security backup to first backup (optionally with --overwrite to overwrite existing files)
 """
 
 
@@ -67,6 +73,11 @@ class Command(BaseCommand):
             action="store_true",
             help="use this to have zipped media files",
         )
+        parser.add_argument(
+            "--overwrite",
+            action="store_true",
+            help="overwrite existing files in the security backup (default: False)",
+        )
 
     def handle(self, *args, **options):
         if not options["action"]:
@@ -81,7 +92,9 @@ class Command(BaseCommand):
             else:
                 backup_media()
         elif options["action"] == "backup_db_and_media":
-            backup_database_and_media(zipped_media=is_zipped)
+            backup_database_and_media(
+                zipped_media=is_zipped, overwrite=options.get("overwrite", False)
+            )
         elif options["action"] == "list":
             list_saved_databases()
         elif options["action"] == "list_media":
@@ -104,6 +117,10 @@ class Command(BaseCommand):
             file_media = options.get("file_media")
             db_file = options.get("file")
             recover_database_and_media(file_media, db_file)
+        elif options["action"] == "security_backup":
+            security_backup(overwrite=options.get("overwrite", False))
+        elif options["action"] == "restore_security_backup":
+            restore_security_backup(overwrite=options.get("overwrite", False))
         else:
             usage_error()
 

@@ -33,6 +33,14 @@ BACKUP_HOST = None  # Optional, default to s3.fr-par.scw.cloud (Scaleway Storage
 # Optional, for compressing the backup
 BACKUP_COMPRESS = True
 BACKUP_RECOVER_N_WORKERS = 4  # Optional, default to 1
+
+# To add a second backup for exemple if you store media directly on S3
+
+SECOND_BACKUP_PATH_LIST = ['/path/to/media']
+SECOND_BACKUP_BUCKET = 'my_project_backup'
+SECOND_BACKUP_DESTINATION = 'my_project_backup' # Optional by default "security_backup"
+SECOND_BACKUP_HOST = 's3.fr-par.scw.cloud' # Optional by default = BACKUP_HOST
+SECOND_BACKUP_REGION = 'fr-par' # Optional by default = BACKUP_REGION
 ```
 
 By default, old backups are removed in order not to take up too much space.
@@ -51,12 +59,13 @@ You can now backup with the `backup_db` management command :
 
 - `/backup/last-backup` shows the latest backup
 - `/backup/backup-is-less-than-XX-hours-old` answers
-`yes` (status 200) or `no` (status 500). This route can be used with a service
-such as uptimerobot.com.
+  `yes` (status 200) or `no` (status 500). This route can be used with a service
+  such as uptimerobot.com.
 
 ### Gitignore
 
 If you use it in local environment, ignore the backup files
+
 ```
 .telescoop_backup_last_backup
 *.sqlite
