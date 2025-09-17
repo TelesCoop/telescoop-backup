@@ -62,6 +62,10 @@ You can now backup with the `backup_db` management command :
   `yes` (status 200) or `no` (status 500). This route can be used with a service
   such as uptimerobot.com.
 
+### Security Backup
+
+This solution duplicates media files currently stored directly on S3, providing a backup in case of accidental deletion (for example, due to a misconfigured Ansible script). This is designed to mitigate this specific risk, as Scaleway already provides data redundancy (3 copies by default, even in case of hardware failure).
+
 ### Gitignore
 
 If you use it in local environment, ignore the backup files
