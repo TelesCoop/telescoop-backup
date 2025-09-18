@@ -69,11 +69,11 @@ class BackupType(Enum):
 
 CLIENT_PARAMS_BY_BACKUP = {
     BackupType.MAIN: {
-        "host": host,
+        "entpoint_url": f"https://{host}",
         "region": region,
     },
     BackupType.SECURITY: {
-        "host": SECURITY_BACKUP_HOST,
+        "entpoint_url": f"https://{SECURITY_BACKUP_HOST}",
         "region": SECURITY_BACKUP_REGION,
     },
 }
@@ -256,7 +256,9 @@ def _get_existing_security_files(security_connexion):
     """Get set of existing files in security bucket."""
     try:
         all_security_objects = _list_objects_paginated(
-            security_connexion, SECURITY_BACKUP_BUCKET, SECURITY_BACKUP_DESTINATION + "/"
+            security_connexion,
+            SECURITY_BACKUP_BUCKET,
+            SECURITY_BACKUP_DESTINATION + "/",
         )
         existing_files = {obj["Key"] for obj in all_security_objects}
         print(f"Found {len(existing_files)} existing files in security bucket")
@@ -356,7 +358,9 @@ def restore_security_backup(overwrite=False):
     try:
         # Get all objects from the security bucket with the security backup prefix using pagination
         all_objects = _list_objects_paginated(
-            security_connexion, SECURITY_BACKUP_BUCKET, SECURITY_BACKUP_DESTINATION + "/"
+            security_connexion,
+            SECURITY_BACKUP_BUCKET,
+            SECURITY_BACKUP_DESTINATION + "/",
         )
 
         if not all_objects:
