@@ -52,13 +52,13 @@ LAST_BACKUP_FILE = os.path.join(settings.BASE_DIR, ".telescoop_backup_last_backu
 BUCKET = settings.BACKUP_BUCKET
 
 # Security backup settings
-SECOND_BACKUP_PATH_LIST = getattr(settings, "SECOND_BACKUP_PATH_LIST", [])
-SECOND_BACKUP_BUCKET = getattr(settings, "SECOND_BACKUP_BUCKET", None)
-SECOND_BACKUP_DESTINATION = (
-    getattr(settings, "SECOND_BACKUP_DESTINATION", None) or "security_backup"
+SECURITY_BACKUP_PATH_LIST = getattr(settings, "SECURITY_BACKUP_PATH_LIST", [])
+SECURITY_BACKUP_BUCKET = getattr(settings, "SECURITY_BACKUP_BUCKET", None)
+SECURITY_BACKUP_DESTINATION = (
+    getattr(settings, "SECURITY_BACKUP_DESTINATION", None) or "security_backup"
 )
-SECOND_BACKUP_HOST = getattr(settings, "SECOND_BACKUP_HOST", host)
-SECOND_BACKUP_REGION = getattr(settings, "SECOND_BACKUP_REGION", region)
+SECURITY_BACKUP_HOST = getattr(settings, "SECURITY_BACKUP_HOST", host)
+SECURITY_BACKUP_REGION = getattr(settings, "SECURITY_BACKUP_REGION", region)
 MAX_PAGINATION_ITERATIONS = getattr(settings, "BACKUP_MAX_PAGINATION_ITERATIONS", 10000)
 
 
@@ -73,8 +73,8 @@ CLIENT_PARAMS_BY_BACKUP = {
         "region": region,
     },
     BackupType.SECURITY: {
-        "host": SECOND_BACKUP_HOST,
-        "region": SECOND_BACKUP_REGION,
+        "host": SECURITY_BACKUP_HOST,
+        "region": SECURITY_BACKUP_REGION,
     },
 }
 
@@ -256,7 +256,7 @@ def _get_existing_security_files(security_connexion):
     """Get set of existing files in security bucket."""
     try:
         all_security_objects = _list_objects_paginated(
-            security_connexion, SECOND_BACKUP_BUCKET, SECOND_BACKUP_DESTINATION + "/"
+            security_connexion, SECURITY_BACKUP_BUCKET, SECURITY_BACKUP_DESTINATION + "/"
         )
         existing_files = {obj["Key"] for obj in all_security_objects}
         print(f"Found {len(existing_files)} existing files in security bucket")
@@ -267,13 +267,13 @@ def _get_existing_security_files(security_connexion):
 
 
 def security_backup(overwrite=False):
-    """Copy files from first bucket to second bucket for security backup, filtering by SECOND_BACKUP_PATH_LIST."""
-    if not SECOND_BACKUP_PATH_LIST:
-        print("No paths defined in SECOND_BACKUP_PATH_LIST, skipping security backup")
+    """Copy files from first bucket to second bucket for security backup, filtering by SECURITY_BACKUP_PATH_LIST."""
+    if not SECURITY_BACKUP_PATH_LIST:
+        print("No paths defined in SECURITY_BACKUP_PATH_LIST, skipping security backup")
         return
 
-    if not SECOND_BACKUP_BUCKET:
-        print("No SECOND_BACKUP_BUCKET defined, skipping security backup upload")
+    if not SECURITY_BACKUP_BUCKET:
+        print("No SECURITY_BACKUP_BUCKET defined, skipping security backup upload")
         return
 
     # Create connections to both buckets
@@ -283,11 +283,11 @@ def security_backup(overwrite=False):
     try:
         # Get objects from primary bucket using prefix filtering for each backup path
         matching_objects = _get_objects_for_backup_paths(
-            primary_connexion, SECOND_BACKUP_PATH_LIST
+            primary_connexion, SECURITY_BACKUP_PATH_LIST
         )
 
         if not matching_objects:
-            print(f"No objects found matching any paths: {SECOND_BACKUP_PATH_LIST}")
+            print(f"No objects found matching any paths: {SECURITY_BACKUP_PATH_LIST}")
             return
 
         print(f"Total: found {len(matching_objects)} objects matching specified paths")
@@ -301,7 +301,7 @@ def security_backup(overwrite=False):
         files_to_copy = []
         for obj in matching_objects:
             source_key = obj["Key"]
-            dest_key = f"{SECOND_BACKUP_DESTINATION}/{source_key}"
+            dest_key = f"{SECURITY_BACKUP_DESTINATION}/{source_key}"
 
             if not overwrite and dest_key in existing_files:
                 continue
@@ -318,7 +318,7 @@ def security_backup(overwrite=False):
 
         def copy_to_security_bucket(obj, pbar):
             source_key = obj["Key"]
-            dest_key = f"{SECOND_BACKUP_DESTINATION}/{source_key}"
+            dest_key = f"{SECURITY_BACKUP_DESTINATION}/{source_key}"
             pbar.set_postfix_str(f"Processing {source_key}")
 
             try:
@@ -326,7 +326,7 @@ def security_backup(overwrite=False):
                 pbar.write(f"Copying {source_key} to security bucket as {dest_key}")
                 security_connexion.copy_object(
                     CopySource=copy_source,
-                    Bucket=SECOND_BACKUP_BUCKET,
+                    Bucket=SECURITY_BACKUP_BUCKET,
                     Key=dest_key,
                 )
                 return True
@@ -345,8 +345,8 @@ def security_backup(overwrite=False):
 
 def restore_security_backup(overwrite=False):
     """Copy files from security bucket back to first bucket."""
-    if not SECOND_BACKUP_BUCKET:
-        print("No SECOND_BACKUP_BUCKET defined, skipping security backup restore")
+    if not SECURITY_BACKUP_BUCKET:
+        print("No SECURITY_BACKUP_BUCKET defined, skipping security backup restore")
         return
 
     # Create connections to both buckets
@@ -356,7 +356,7 @@ def restore_security_backup(overwrite=False):
     try:
         # Get all objects from the security bucket with the security backup prefix using pagination
         all_objects = _list_objects_paginated(
-            security_connexion, SECOND_BACKUP_BUCKET, SECOND_BACKUP_DESTINATION + "/"
+            security_connexion, SECURITY_BACKUP_BUCKET, SECURITY_BACKUP_DESTINATION + "/"
         )
 
         if not all_objects:
@@ -369,11 +369,11 @@ def restore_security_backup(overwrite=False):
             security_key = obj["Key"]
 
             # Remove the security backup prefix to get the original key
-            if not security_key.startswith(SECOND_BACKUP_DESTINATION + "/"):
+            if not security_key.startswith(SECURITY_BACKUP_DESTINATION + "/"):
                 pbar.write(f"Skipping {security_key} - not in security backup prefix")
                 return False
 
-            original_key = security_key[len(SECOND_BACKUP_DESTINATION) + 1 :]
+            original_key = security_key[len(SECURITY_BACKUP_DESTINATION) + 1 :]
             pbar.set_postfix_str(f"Processing {original_key}")
 
             # Check if file already exists in primary bucket
@@ -387,7 +387,7 @@ def restore_security_backup(overwrite=False):
 
             try:
                 # Copy object from security bucket to primary bucket
-                copy_source = {"Bucket": SECOND_BACKUP_BUCKET, "Key": security_key}
+                copy_source = {"Bucket": SECURITY_BACKUP_BUCKET, "Key": security_key}
                 pbar.write(
                     f"Restoring {security_key} to primary bucket as {original_key}"
                 )

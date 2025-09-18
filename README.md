@@ -34,13 +34,13 @@ BACKUP_HOST = None  # Optional, default to s3.fr-par.scw.cloud (Scaleway Storage
 BACKUP_COMPRESS = True
 BACKUP_RECOVER_N_WORKERS = 4  # Optional, default to 1
 
-# To add a second backup for exemple if you store media directly on S3
-
-SECOND_BACKUP_PATH_LIST = ['/path/to/media']
-SECOND_BACKUP_BUCKET = 'my_project_backup'
-SECOND_BACKUP_DESTINATION = 'my_project_backup' # Optional by default "security_backup"
-SECOND_BACKUP_HOST = 's3.fr-par.scw.cloud' # Optional by default = BACKUP_HOST
-SECOND_BACKUP_REGION = 'fr-par' # Optional by default = BACKUP_REGION
+# Security backup settings - for duplicating files to a second location
+SECURITY_BACKUP_PATH_LIST = ['/path/to/media']  # List of paths to backup
+SECURITY_BACKUP_BUCKET = 'my_project_security_backup'  # Destination bucket
+SECURITY_BACKUP_DESTINATION = 'security_backup'  # Optional, prefix in destination bucket
+SECURITY_BACKUP_HOST = 's3.fr-par.scw.cloud'  # Optional, defaults to BACKUP_HOST
+SECURITY_BACKUP_REGION = 'fr-par'  # Optional, defaults to BACKUP_REGION
+BACKUP_MAX_PAGINATION_ITERATIONS = 10000  # Optional, safety limit for S3 pagination
 ```
 
 By default, old backups are removed in order not to take up too much space.
