@@ -171,10 +171,10 @@ def security_boto_client():
     )
 
 
-def file_exists_in_bucket(security_connexion, remote_key):
+def file_exists_in_bucket(connexion, bucket_name, remote_key):
     """Check if file exists in the security bucket."""
     try:
-        security_connexion.head_object(Bucket=SECOND_BACKUP_BUCKET, Key=remote_key)
+        connexion.head_object(Bucket=bucket_name, Key=remote_key)
         return True
     except ClientError as e:
         if e.response["Error"]["Code"] == "404":
@@ -186,7 +186,9 @@ def upload_file_to_security_bucket(
     security_connexion, source_path, remote_key, overwrite=False
 ):
     """Upload a single file to the security bucket with overwrite check."""
-    if not overwrite and file_exists_in_bucket(security_connexion, remote_key):
+    if not overwrite and file_exists_in_bucket(
+        security_connexion, SECOND_BACKUP_BUCKET, remote_key
+    ):
         print(
             f"File {remote_key} already exists in destination, skipping (overwrite=False)"
         )
@@ -288,7 +290,9 @@ def security_backup(overwrite=False):
 
                     # Check if there are more objects to fetch
                     if security_objects.get("IsTruncated", False):
-                        continuation_token = security_objects.get("NextContinuationToken")
+                        continuation_token = security_objects.get(
+                            "NextContinuationToken"
+                        )
                     else:
                         break
 
@@ -384,9 +388,7 @@ def restore_security_backup(overwrite=False):
 
         print(f"Found {len(all_objects)} objects in security backup bucket")
 
-        with tqdm(
-            all_objects, desc="Restoring files from security bucket"
-        ) as pbar:
+        with tqdm(all_objects, desc="Restoring files from security bucket") as pbar:
             for obj in pbar:
                 security_key = obj["Key"]
 
