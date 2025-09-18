@@ -69,11 +69,11 @@ class BackupType(Enum):
 
 CLIENT_PARAMS_BY_BACKUP = {
     BackupType.MAIN: {
-        "entpoint_url": f"https://{host}",
+        "endpoint_url": f"https://{host}",
         "region": region,
     },
     BackupType.SECURITY: {
-        "entpoint_url": f"https://{SECURITY_BACKUP_HOST}",
+        "endpoint_url": f"https://{SECURITY_BACKUP_HOST}",
         "region": SECURITY_BACKUP_REGION,
     },
 }
