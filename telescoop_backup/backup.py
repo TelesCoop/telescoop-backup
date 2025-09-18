@@ -6,6 +6,7 @@ import re
 
 from django.conf import settings
 from tqdm import tqdm
+from enum import Enum
 
 import boto3
 from botocore.exceptions import ClientError
@@ -58,17 +59,88 @@ SECOND_BACKUP_DESTINATION = (
 )
 SECOND_BACKUP_HOST = getattr(settings, "SECOND_BACKUP_HOST", host)
 SECOND_BACKUP_REGION = getattr(settings, "SECOND_BACKUP_REGION", region)
+MAX_PAGINATION_ITERATIONS = getattr(settings, "BACKUP_MAX_PAGINATION_ITERATIONS", 10000)
 
 
-def boto_client():
+class BackupType(Enum):
+    MAIN = "main"
+    SECURITY = "security"
+
+
+CLIENT_PARAMS_BY_BACKUP = {
+    BackupType.MAIN: {
+        "host": host,
+        "region": region,
+    },
+    BackupType.SECURITY: {
+        "host": SECOND_BACKUP_HOST,
+        "region": SECOND_BACKUP_REGION,
+    },
+}
+
+
+def boto_client(backup_type=BackupType.MAIN):
     """Connect to AWS S3."""
+
     return boto3.client(
         "s3",
         aws_access_key_id=settings.BACKUP_ACCESS,
         aws_secret_access_key=settings.BACKUP_SECRET,
-        endpoint_url=f"https://{host}",
-        region_name=region,
+        **CLIENT_PARAMS_BY_BACKUP[backup_type],
     )
+
+
+def _list_objects_paginated(connexion, bucket, prefix=""):
+    """List all objects in a bucket with pagination support."""
+    all_objects = []
+    continuation_token = None
+    iteration_count = 0
+
+    while iteration_count < MAX_PAGINATION_ITERATIONS:
+        list_kwargs = {"Bucket": bucket, "Prefix": prefix}
+        if continuation_token:
+            list_kwargs["ContinuationToken"] = continuation_token
+
+        objects = connexion.list_objects_v2(**list_kwargs)
+
+        if "Contents" in objects:
+            all_objects.extend(objects["Contents"])
+
+        has_more_objects = objects.get("IsTruncated", False)
+        continuation_token = objects.get("NextContinuationToken")
+
+        # Check if there are more objects to fetch
+        if not (has_more_objects and continuation_token):
+            break
+
+        iteration_count += 1
+
+    if iteration_count >= MAX_PAGINATION_ITERATIONS:
+        print(
+            f"Warning: Reached maximum iteration limit ({MAX_PAGINATION_ITERATIONS}) in _list_objects_paginated"
+        )
+
+    return all_objects
+
+
+def _file_exists_in_bucket(connexion, bucket, key):
+    """Check if a file exists in the bucket."""
+    try:
+        connexion.head_object(Bucket=bucket, Key=key)
+        return True
+    except ClientError as e:
+        if e.response["Error"]["Code"] == "404":
+            return False
+        raise
+
+
+def _copy_objects_with_progress(objects, copy_func, progress_desc):
+    """Copy objects with progress bar and error handling."""
+    with tqdm(objects, desc=progress_desc) as pbar:
+        for obj in pbar:
+            success = copy_func(obj, pbar)
+            if success:
+                pbar.write(f"Successfully processed {obj.get('Key', 'object')}")
 
 
 def backup_file(file_path: str, remote_key: str, connexion=None, skip_if_exists=False):
@@ -76,13 +148,8 @@ def backup_file(file_path: str, remote_key: str, connexion=None, skip_if_exists=
     if connexion is None:
         connexion = boto_client()
 
-    if skip_if_exists:
-        try:
-            connexion.head_object(Bucket=BUCKET, Key=remote_key)
-            return
-        except connexion.exceptions.ClientError as e:
-            if e.response["Error"]["Code"] != "404":
-                raise
+    if skip_if_exists and _file_exists_in_bucket(connexion, BUCKET, remote_key):
+        return
     connexion.upload_file(file_path, BUCKET, remote_key)
 
 
@@ -130,7 +197,7 @@ def dump_database():
 
 def remove_old_database_files():
     """Remove files older than KEEP_N_DAYS days."""
-    connexion = boto_client()
+    connexion = boto_client(BackupType.MAIN)
     backups = get_backups(connexion)
 
     now = datetime.datetime.now()
@@ -160,47 +227,43 @@ def backup_zipped_media(date=None):
     os.remove(ZIPPED_BACKUP_FILE)
 
 
-def security_boto_client():
-    """Connect to the security backup S3 bucket."""
-    return boto3.client(
-        "s3",
-        aws_access_key_id=settings.BACKUP_ACCESS,
-        aws_secret_access_key=settings.BACKUP_SECRET,
-        endpoint_url=f"https://{SECOND_BACKUP_HOST}",
-        region_name=SECOND_BACKUP_REGION,
-    )
+def _get_objects_for_backup_paths(primary_connexion, backup_paths):
+    """Get objects from primary bucket using prefix filtering for each backup path."""
+    matching_objects = []
+
+    for backup_path in backup_paths:
+        # Remove leading slash if present for consistent comparison
+        backup_path = backup_path.lstrip("/")
+        print(f"Fetching objects with prefix: {backup_path}")
+
+        try:
+            path_objects = _list_objects_paginated(
+                primary_connexion, BUCKET, backup_path
+            )
+            if path_objects:
+                matching_objects.extend(path_objects)
+                print(f"Found {len(path_objects)} objects for prefix '{backup_path}'")
+            else:
+                print(f"No objects found for prefix '{backup_path}'")
+        except ClientError as e:
+            print(f"Error fetching objects for prefix '{backup_path}': {e}")
+            continue
+
+    return matching_objects
 
 
-def file_exists_in_bucket(connexion, bucket_name, remote_key):
-    """Check if file exists in the security bucket."""
+def _get_existing_security_files(security_connexion):
+    """Get set of existing files in security bucket."""
     try:
-        connexion.head_object(Bucket=bucket_name, Key=remote_key)
-        return True
-    except ClientError as e:
-        if e.response["Error"]["Code"] == "404":
-            return False
-        raise
-
-
-def upload_file_to_security_bucket(
-    security_connexion, source_path, remote_key, overwrite=False
-):
-    """Upload a single file to the security bucket with overwrite check."""
-    if not overwrite and file_exists_in_bucket(
-        security_connexion, SECOND_BACKUP_BUCKET, remote_key
-    ):
-        print(
-            f"File {remote_key} already exists in destination, skipping (overwrite=False)"
+        all_security_objects = _list_objects_paginated(
+            security_connexion, SECOND_BACKUP_BUCKET, SECOND_BACKUP_DESTINATION + "/"
         )
-        return False
-
-    try:
-        print(f"Uploading file {source_path} to security bucket as {remote_key}")
-        security_connexion.upload_file(source_path, SECOND_BACKUP_BUCKET, remote_key)
-        return True
+        existing_files = {obj["Key"] for obj in all_security_objects}
+        print(f"Found {len(existing_files)} existing files in security bucket")
+        return existing_files
     except ClientError as e:
-        print(f"Error uploading {source_path}: {e}")
-        return False
+        print(f"Warning: Could not list existing security bucket files: {e}")
+        return set()
 
 
 def security_backup(overwrite=False):
@@ -214,53 +277,14 @@ def security_backup(overwrite=False):
         return
 
     # Create connections to both buckets
-    primary_connexion = boto_client()
-    security_connexion = security_boto_client()
+    primary_connexion = boto_client(BackupType.MAIN)
+    security_connexion = boto_client(BackupType.SECURITY)
 
     try:
         # Get objects from primary bucket using prefix filtering for each backup path
-        matching_objects = []
-        total_objects_found = 0
-
-        for backup_path in SECOND_BACKUP_PATH_LIST:
-            # Remove leading slash if present for consistent comparison
-            backup_path = backup_path.lstrip("/")
-
-            print(f"Fetching objects with prefix: {backup_path}")
-
-            # Use prefix to filter objects at API level with pagination for all objects
-            try:
-                path_objects = []
-                continuation_token = None
-
-                while True:
-                    list_kwargs = {"Bucket": BUCKET, "Prefix": backup_path}
-                    if continuation_token:
-                        list_kwargs["ContinuationToken"] = continuation_token
-
-                    objects = primary_connexion.list_objects_v2(**list_kwargs)
-
-                    if "Contents" in objects:
-                        path_objects.extend(objects["Contents"])
-
-                    # Check if there are more objects to fetch
-                    if objects.get("IsTruncated", False):
-                        continuation_token = objects.get("NextContinuationToken")
-                    else:
-                        break
-
-                if path_objects:
-                    matching_objects.extend(path_objects)
-                    total_objects_found += len(path_objects)
-                    print(
-                        f"Found {len(path_objects)} objects for prefix '{backup_path}'"
-                    )
-                else:
-                    print(f"No objects found for prefix '{backup_path}'")
-
-            except ClientError as e:
-                print(f"Error fetching objects for prefix '{backup_path}': {e}")
-                continue
+        matching_objects = _get_objects_for_backup_paths(
+            primary_connexion, SECOND_BACKUP_PATH_LIST
+        )
 
         if not matching_objects:
             print(f"No objects found matching any paths: {SECOND_BACKUP_PATH_LIST}")
@@ -271,38 +295,7 @@ def security_backup(overwrite=False):
         # If not overwriting, get existing files in security bucket to avoid unnecessary checks
         existing_files = set()
         if not overwrite:
-            try:
-                all_security_objects = []
-                continuation_token = None
-
-                while True:
-                    list_kwargs = {
-                        "Bucket": SECOND_BACKUP_BUCKET,
-                        "Prefix": SECOND_BACKUP_DESTINATION + "/",
-                    }
-                    if continuation_token:
-                        list_kwargs["ContinuationToken"] = continuation_token
-
-                    security_objects = security_connexion.list_objects_v2(**list_kwargs)
-
-                    if "Contents" in security_objects:
-                        all_security_objects.extend(security_objects["Contents"])
-
-                    # Check if there are more objects to fetch
-                    if security_objects.get("IsTruncated", False):
-                        continuation_token = security_objects.get(
-                            "NextContinuationToken"
-                        )
-                    else:
-                        break
-
-                if all_security_objects:
-                    existing_files = {obj["Key"] for obj in all_security_objects}
-                    print(
-                        f"Found {len(existing_files)} existing files in security bucket"
-                    )
-            except ClientError as e:
-                print(f"Warning: Could not list existing security bucket files: {e}")
+            existing_files = _get_existing_security_files(security_connexion)
 
         # Filter objects that actually need to be copied
         files_to_copy = []
@@ -323,25 +316,27 @@ def security_backup(overwrite=False):
 
         print(f"Need to copy {len(files_to_copy)} files to security bucket")
 
-        with tqdm(files_to_copy, desc="Copying files to security bucket") as pbar:
-            for obj in pbar:
-                source_key = obj["Key"]
-                dest_key = f"{SECOND_BACKUP_DESTINATION}/{source_key}"
+        def copy_to_security_bucket(obj, pbar):
+            source_key = obj["Key"]
+            dest_key = f"{SECOND_BACKUP_DESTINATION}/{source_key}"
+            pbar.set_postfix_str(f"Processing {source_key}")
 
-                pbar.set_postfix_str(f"Processing {source_key}")
+            try:
+                copy_source = {"Bucket": BUCKET, "Key": source_key}
+                pbar.write(f"Copying {source_key} to security bucket as {dest_key}")
+                security_connexion.copy_object(
+                    CopySource=copy_source,
+                    Bucket=SECOND_BACKUP_BUCKET,
+                    Key=dest_key,
+                )
+                return True
+            except ClientError as e:
+                pbar.write(f"Error copying {source_key}: {e}")
+                return False
 
-                try:
-                    # Copy object from primary bucket to security bucket
-                    copy_source = {"Bucket": BUCKET, "Key": source_key}
-                    pbar.write(f"Copying {source_key} to security bucket as {dest_key}")
-                    security_connexion.copy_object(
-                        CopySource=copy_source,
-                        Bucket=SECOND_BACKUP_BUCKET,
-                        Key=dest_key,
-                    )
-                    pbar.write(f"Successfully copied {source_key}")
-                except ClientError as e:
-                    pbar.write(f"Error copying {source_key}: {e}")
+        _copy_objects_with_progress(
+            files_to_copy, copy_to_security_bucket, "Copying files to security bucket"
+        )
 
     except ClientError as e:
         print(f"Error listing objects from primary bucket: {e}")
@@ -355,32 +350,14 @@ def restore_security_backup(overwrite=False):
         return
 
     # Create connections to both buckets
-    primary_connexion = boto_client()
-    security_connexion = security_boto_client()
+    primary_connexion = boto_client(BackupType.MAIN)
+    security_connexion = boto_client(BackupType.SECURITY)
 
     try:
         # Get all objects from the security bucket with the security backup prefix using pagination
-        all_objects = []
-        continuation_token = None
-
-        while True:
-            list_kwargs = {
-                "Bucket": SECOND_BACKUP_BUCKET,
-                "Prefix": SECOND_BACKUP_DESTINATION + "/",
-            }
-            if continuation_token:
-                list_kwargs["ContinuationToken"] = continuation_token
-
-            objects = security_connexion.list_objects_v2(**list_kwargs)
-
-            if "Contents" in objects:
-                all_objects.extend(objects["Contents"])
-
-            # Check if there are more objects to fetch
-            if objects.get("IsTruncated", False):
-                continuation_token = objects.get("NextContinuationToken")
-            else:
-                break
+        all_objects = _list_objects_paginated(
+            security_connexion, SECOND_BACKUP_BUCKET, SECOND_BACKUP_DESTINATION + "/"
+        )
 
         if not all_objects:
             print("No objects found in security backup bucket")
@@ -388,48 +365,47 @@ def restore_security_backup(overwrite=False):
 
         print(f"Found {len(all_objects)} objects in security backup bucket")
 
-        with tqdm(all_objects, desc="Restoring files from security bucket") as pbar:
-            for obj in pbar:
-                security_key = obj["Key"]
+        def restore_from_security_bucket(obj, pbar):
+            security_key = obj["Key"]
 
-                # Remove the security backup prefix to get the original key
-                if not security_key.startswith(SECOND_BACKUP_DESTINATION + "/"):
-                    pbar.write(
-                        f"Skipping {security_key} - not in security backup prefix"
-                    )
-                    continue
+            # Remove the security backup prefix to get the original key
+            if not security_key.startswith(SECOND_BACKUP_DESTINATION + "/"):
+                pbar.write(f"Skipping {security_key} - not in security backup prefix")
+                return False
 
-                original_key = security_key[len(SECOND_BACKUP_DESTINATION) + 1 :]
+            original_key = security_key[len(SECOND_BACKUP_DESTINATION) + 1 :]
+            pbar.set_postfix_str(f"Processing {original_key}")
 
-                pbar.set_postfix_str(f"Processing {original_key}")
+            # Check if file already exists in primary bucket
+            if not overwrite and _file_exists_in_bucket(
+                primary_connexion, BUCKET, original_key
+            ):
+                pbar.write(
+                    f"File {original_key} already exists in primary bucket, skipping (overwrite=False)"
+                )
+                return False
 
-                # Check if file already exists in primary bucket
-                if not overwrite:
-                    try:
-                        primary_connexion.head_object(Bucket=BUCKET, Key=original_key)
-                        pbar.write(
-                            f"File {original_key} already exists in primary bucket, skipping (overwrite=False)"
-                        )
-                        continue
-                    except ClientError as e:
-                        if e.response["Error"]["Code"] != "404":
-                            pbar.write(f"Error checking if {original_key} exists: {e}")
-                            continue
+            try:
+                # Copy object from security bucket to primary bucket
+                copy_source = {"Bucket": SECOND_BACKUP_BUCKET, "Key": security_key}
+                pbar.write(
+                    f"Restoring {security_key} to primary bucket as {original_key}"
+                )
+                primary_connexion.copy_object(
+                    CopySource=copy_source,
+                    Bucket=BUCKET,
+                    Key=original_key,
+                )
+                return True
+            except ClientError as e:
+                pbar.write(f"Error restoring {security_key}: {e}")
+                return False
 
-                try:
-                    # Copy object from security bucket to primary bucket
-                    copy_source = {"Bucket": SECOND_BACKUP_BUCKET, "Key": security_key}
-                    pbar.write(
-                        f"Restoring {security_key} to primary bucket as {original_key}"
-                    )
-                    primary_connexion.copy_object(
-                        CopySource=copy_source,
-                        Bucket=BUCKET,
-                        Key=original_key,
-                    )
-                    pbar.write(f"Successfully restored {original_key}")
-                except ClientError as e:
-                    pbar.write(f"Error restoring {security_key}: {e}")
+        _copy_objects_with_progress(
+            all_objects,
+            restore_from_security_bucket,
+            "Restoring files from security bucket",
+        )
 
     except ClientError as e:
         print(f"Error listing objects from security backup bucket: {e}")
@@ -437,7 +413,7 @@ def restore_security_backup(overwrite=False):
 
 
 def recover_zipped_media(file_name=None):
-    connexion = boto_client()
+    connexion = boto_client(BackupType.MAIN)
     if file_name is None or file_name == "latest":
         backups = get_backups(connexion, ZIPPED_MEDIA_FILE_FORMAT)
         if not len(backups):
@@ -473,7 +449,11 @@ def recover_database_and_media(file_name=None, db_file=None):
 
 def upload_to_online_backup(date=None):
     """Upload the database file online."""
-    backup_file(file_path=DATABASE_BACKUP_FILE, remote_key=db_name(date))
+    backup_file(
+        file_path=DATABASE_BACKUP_FILE,
+        remote_key=db_name(date),
+        connexion=boto_client(BackupType.MAIN),
+    )
 
 
 def update_latest_backup():
