@@ -172,7 +172,6 @@ def backup_folder(path: str, remote_path: str, connexion=None):
 def dump_database():
     """Dump the database to a file."""
     if IS_POSTGRES:
-        import pexpect
 
         db_name = settings.DATABASES["default"]["NAME"]
         db_user = settings.DATABASES["default"]["USER"]
@@ -185,10 +184,9 @@ def dump_database():
             )
 
         if db_password:
-            child = pexpect.spawn("/bin/bash", ["-c", shell_cmd])
-            child.expect("Password:")
-            child.sendline(db_password)
-            child.wait()
+            env = os.environ.copy()
+            env["PGPASSWORD"] = db_password
+            subprocess.check_output(shell_cmd, shell=True, env=env)
         else:
             subprocess.check_output(shell_cmd, shell=True)
     else:
@@ -553,12 +551,9 @@ def load_postgresql_dump(path):
     print("command:", shell_cmd)
 
     if db_password:
-        import pexpect
-
-        child = pexpect.spawn("/bin/bash", ["-c", shell_cmd])
-        child.expect(expected_text)
-        child.sendline(db_password)
-        child.expect(pexpect.EOF, timeout=None)  # pg_restore is terminating silently
+       env = os.environ.copy()
+       env["PGPASSWORD"] = db_password
+       subprocess.check_output(shell_cmd, shell=True, env=env)
     else:
         subprocess.check_output(shell_cmd, shell=True)
 
