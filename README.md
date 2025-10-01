@@ -29,12 +29,13 @@ BACKUP_SECRET = 'my_secret'  # S3 SECRET KEY
 BACKUP_BUCKET = 'my_project_backup'  # S3 Bucket
 BACKUP_KEEP_N_DAYS = 31  # Optional, defaults to 31
 BACKUP_HOST = None  # Optional, default to s3.fr-par.scw.cloud (Scaleway Storage in Paris)
+BACKUP_USE_AWS = False # True if you want to use Amazon s3
 
 # Optional, for compressing the backup
 BACKUP_COMPRESS = True
 BACKUP_RECOVER_N_WORKERS = 4  # Optional, default to 1
 
-# Security backup settings - for duplicating files to a second location
+# Optional, security backup settings - for duplicating files to a second location
 SECURITY_BACKUP_PATH_LIST = ['/path/to/media']  # List of paths to backup
 SECURITY_BACKUP_BUCKET = 'my_project_security_backup'  # Destination bucket
 SECURITY_BACKUP_DESTINATION = 'security_backup'  # Optional, prefix in destination bucket

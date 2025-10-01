@@ -6,12 +6,16 @@ from telescoop_backup.backup import (
     backup_database,
     list_saved_databases,
     recover_database,
+)
+from telescoop_backup.media_backup import (
     backup_media,
-    backup_database_and_media,
-    recover_database_and_media,
     backup_zipped_media,
     list_saved_zipped_media,
     recover_zipped_media,
+    backup_database_and_media,
+    recover_database_and_media,
+)
+from telescoop_backup.security_backup import (
     security_backup,
     restore_security_backup,
 )
