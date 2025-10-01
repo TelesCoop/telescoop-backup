@@ -10,12 +10,13 @@ from .backup import (
     backup_folder,
     get_backups,
     BUCKET,
+    DATE_FORMAT,
 )
 
 
 # Media backup settings
 ZIPPED_BACKUP_FILE = os.path.join(settings.BASE_DIR, "media.zip")
-ZIPPED_MEDIA_FILE_FORMAT = "%Y-%m-%dT%H:%M_media.zip"
+ZIPPED_MEDIA_FILE_FORMAT = f"{DATE_FORMAT}_media.zip"
 
 
 def backup_media():
@@ -45,7 +46,7 @@ def recover_zipped_media(file_name=None):
 
     key = connexion.get_object(Bucket=BUCKET, Key=file_name)
     if not key:
-        raise ValueError(f"Wrong input file db {file_name}")
+        raise ValueError(f"Wrong input zipped media {file_name}")
 
     connexion.download_file(Bucket=BUCKET, Key=file_name, Filename=ZIPPED_BACKUP_FILE)
 
