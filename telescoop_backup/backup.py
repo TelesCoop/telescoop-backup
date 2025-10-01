@@ -7,6 +7,7 @@ import re
 from django.conf import settings
 from tqdm import tqdm
 from enum import Enum
+import humanize
 
 import boto3
 from botocore.exceptions import ClientError
@@ -39,8 +40,6 @@ else:
         )
     )
     FILE_FORMAT = f"{DATE_FORMAT}_db.sqlite"
-ZIPPED_BACKUP_FILE = os.path.join(settings.BASE_DIR, "media.zip")
-ZIPPED_MEDIA_FILE_FORMAT = f"{DATE_FORMAT}_media.zip"
 KEEP_N_DAYS = getattr(settings, "BACKUP_KEEP_N_DAYS", 31)
 region = getattr(settings, "BACKUP_REGION", None)
 if getattr(settings, "BACKUP_USE_AWS", None) and region:
@@ -52,11 +51,6 @@ LAST_BACKUP_FILE = os.path.join(settings.BASE_DIR, ".telescoop_backup_last_backu
 BUCKET = settings.BACKUP_BUCKET
 
 # Security backup settings
-SECURITY_BACKUP_PATH_LIST = getattr(settings, "SECURITY_BACKUP_PATH_LIST", [])
-SECURITY_BACKUP_BUCKET = getattr(settings, "SECURITY_BACKUP_BUCKET", None)
-SECURITY_BACKUP_DESTINATION = (
-    getattr(settings, "SECURITY_BACKUP_DESTINATION", None) or "security_backup"
-)
 SECURITY_BACKUP_HOST = getattr(settings, "SECURITY_BACKUP_HOST", host)
 SECURITY_BACKUP_REGION = getattr(settings, "SECURITY_BACKUP_REGION", region)
 MAX_PAGINATION_ITERATIONS = getattr(settings, "BACKUP_MAX_PAGINATION_ITERATIONS", 10000)
@@ -213,244 +207,6 @@ def remove_old_database_files():
             print("error removing {}, ignoring".format(backup["key"]["Key"]))
 
 
-def backup_media():
-    media_folder = settings.MEDIA_ROOT
-    backup_folder(media_folder, "media")
-
-
-def backup_zipped_media(date=None):
-    media_folder = settings.MEDIA_ROOT
-    filename, extension = ZIPPED_BACKUP_FILE.split(".")
-    shutil.make_archive(filename, extension, media_folder)
-
-    backup_file(ZIPPED_BACKUP_FILE, zipped_media_file_name(date))
-    os.remove(ZIPPED_BACKUP_FILE)
-
-
-def _get_objects_for_backup_paths(primary_connexion, backup_paths):
-    """Get objects from primary bucket using prefix filtering for each backup path."""
-    matching_objects = []
-
-    for backup_path in backup_paths:
-        # Remove leading slash if present for consistent comparison
-        backup_path = backup_path.lstrip("/")
-        print(f"Fetching objects with prefix: {backup_path}")
-
-        try:
-            path_objects = _list_objects_paginated(
-                primary_connexion, BUCKET, backup_path
-            )
-            if path_objects:
-                matching_objects.extend(path_objects)
-                print(f"Found {len(path_objects)} objects for prefix '{backup_path}'")
-            else:
-                print(f"No objects found for prefix '{backup_path}'")
-        except ClientError as e:
-            print(f"Error fetching objects for prefix '{backup_path}': {e}")
-            continue
-
-    return matching_objects
-
-
-def _get_existing_security_files(security_connexion):
-    """Get set of existing files in security bucket."""
-    try:
-        all_security_objects = _list_objects_paginated(
-            security_connexion,
-            SECURITY_BACKUP_BUCKET,
-            SECURITY_BACKUP_DESTINATION + "/",
-        )
-        existing_files = {obj["Key"] for obj in all_security_objects}
-        print(f"Found {len(existing_files)} existing files in security bucket")
-        return existing_files
-    except ClientError as e:
-        print(f"Warning: Could not list existing security bucket files: {e}")
-        return set()
-
-
-def security_backup(overwrite=False):
-    """Copy files from first bucket to second bucket for security backup, filtering by SECURITY_BACKUP_PATH_LIST."""
-    if not SECURITY_BACKUP_PATH_LIST:
-        print("No paths defined in SECURITY_BACKUP_PATH_LIST, skipping security backup")
-        return
-
-    if not SECURITY_BACKUP_BUCKET:
-        print("No SECURITY_BACKUP_BUCKET defined, skipping security backup upload")
-        return
-
-    # Create connections to both buckets
-    primary_connexion = boto_client(BackupType.MAIN)
-    security_connexion = boto_client(BackupType.SECURITY)
-
-    try:
-        # Get objects from primary bucket using prefix filtering for each backup path
-        matching_objects = _get_objects_for_backup_paths(
-            primary_connexion, SECURITY_BACKUP_PATH_LIST
-        )
-
-        if not matching_objects:
-            print(f"No objects found matching any paths: {SECURITY_BACKUP_PATH_LIST}")
-            return
-
-        print(f"Total: found {len(matching_objects)} objects matching specified paths")
-
-        # If not overwriting, get existing files in security bucket to avoid unnecessary checks
-        existing_files = set()
-        if not overwrite:
-            existing_files = _get_existing_security_files(security_connexion)
-
-        # Filter objects that actually need to be copied
-        files_to_copy = []
-        for obj in matching_objects:
-            source_key = obj["Key"]
-            dest_key = f"{SECURITY_BACKUP_DESTINATION}/{source_key}"
-
-            if not overwrite and dest_key in existing_files:
-                continue
-
-            files_to_copy.append(obj)
-
-        if not files_to_copy:
-            print(
-                "No files need to be copied (all files already exist in security bucket)"
-            )
-            return
-
-        print(f"Need to copy {len(files_to_copy)} files to security bucket")
-
-        def copy_to_security_bucket(obj, pbar):
-            source_key = obj["Key"]
-            dest_key = f"{SECURITY_BACKUP_DESTINATION}/{source_key}"
-            pbar.set_postfix_str(f"Processing {source_key}")
-
-            try:
-                copy_source = {"Bucket": BUCKET, "Key": source_key}
-                pbar.write(f"Copying {source_key} to security bucket as {dest_key}")
-                security_connexion.copy_object(
-                    CopySource=copy_source,
-                    Bucket=SECURITY_BACKUP_BUCKET,
-                    Key=dest_key,
-                )
-                return True
-            except ClientError as e:
-                pbar.write(f"Error copying {source_key}: {e}")
-                return False
-
-        _copy_objects_with_progress(
-            files_to_copy, copy_to_security_bucket, "Copying files to security bucket"
-        )
-
-    except ClientError as e:
-        print(f"Error listing objects from primary bucket: {e}")
-        return
-
-
-def restore_security_backup(overwrite=False):
-    """Copy files from security bucket back to first bucket."""
-    if not SECURITY_BACKUP_BUCKET:
-        print("No SECURITY_BACKUP_BUCKET defined, skipping security backup restore")
-        return
-
-    # Create connections to both buckets
-    primary_connexion = boto_client(BackupType.MAIN)
-    security_connexion = boto_client(BackupType.SECURITY)
-
-    try:
-        # Get all objects from the security bucket with the security backup prefix using pagination
-        all_objects = _list_objects_paginated(
-            security_connexion,
-            SECURITY_BACKUP_BUCKET,
-            SECURITY_BACKUP_DESTINATION + "/",
-        )
-
-        if not all_objects:
-            print("No objects found in security backup bucket")
-            return
-
-        print(f"Found {len(all_objects)} objects in security backup bucket")
-
-        def restore_from_security_bucket(obj, pbar):
-            security_key = obj["Key"]
-
-            # Remove the security backup prefix to get the original key
-            if not security_key.startswith(SECURITY_BACKUP_DESTINATION + "/"):
-                pbar.write(f"Skipping {security_key} - not in security backup prefix")
-                return False
-
-            original_key = security_key[len(SECURITY_BACKUP_DESTINATION) + 1 :]
-            pbar.set_postfix_str(f"Processing {original_key}")
-
-            # Check if file already exists in primary bucket
-            if not overwrite and _file_exists_in_bucket(
-                primary_connexion, BUCKET, original_key
-            ):
-                pbar.write(
-                    f"File {original_key} already exists in primary bucket, skipping (overwrite=False)"
-                )
-                return False
-
-            try:
-                # Copy object from security bucket to primary bucket
-                copy_source = {"Bucket": SECURITY_BACKUP_BUCKET, "Key": security_key}
-                pbar.write(
-                    f"Restoring {security_key} to primary bucket as {original_key}"
-                )
-                primary_connexion.copy_object(
-                    CopySource=copy_source,
-                    Bucket=BUCKET,
-                    Key=original_key,
-                )
-                return True
-            except ClientError as e:
-                pbar.write(f"Error restoring {security_key}: {e}")
-                return False
-
-        _copy_objects_with_progress(
-            all_objects,
-            restore_from_security_bucket,
-            "Restoring files from security bucket",
-        )
-
-    except ClientError as e:
-        print(f"Error listing objects from security backup bucket: {e}")
-        return
-
-
-def recover_zipped_media(file_name=None):
-    connexion = boto_client(BackupType.MAIN)
-    if file_name is None or file_name == "latest":
-        backups = get_backups(connexion, ZIPPED_MEDIA_FILE_FORMAT)
-        if not len(backups):
-            raise ValueError("Could not find any media backup")
-        file_name = backups[-1]["key"]["Key"]
-
-    key = connexion.get_object(Bucket=BUCKET, Key=file_name)
-    if not key:
-        raise ValueError(f"Wrong input file db {file_name}")
-
-    connexion.download_file(Bucket=BUCKET, Key=file_name, Filename=ZIPPED_BACKUP_FILE)
-
-    shutil.unpack_archive(ZIPPED_BACKUP_FILE, settings.MEDIA_ROOT)
-    os.remove(ZIPPED_BACKUP_FILE)
-
-
-def backup_database_and_media(zipped_media=True, overwrite=False):
-    date = datetime.datetime.now()
-    backup_database(date)
-    if zipped_media:
-        backup_zipped_media(date)
-    else:
-        backup_media()
-
-    # Create security backup after regular backup
-    security_backup(overwrite=overwrite)
-
-
-def recover_database_and_media(file_name=None, db_file=None):
-    recover_database(db_file)
-    recover_zipped_media(file_name)
-
-
 def upload_to_online_backup(date=None):
     """Upload the database file online."""
     backup_file(
@@ -461,11 +217,13 @@ def upload_to_online_backup(date=None):
 
 
 def update_latest_backup():
+    """Update the timestamp of the latest backup."""
     with open(LAST_BACKUP_FILE, "w") as fh:
         fh.write(datetime.datetime.now().strftime(DATE_FORMAT))
 
 
 def get_latest_backup():
+    """Get the timestamp of the latest backup."""
     if not os.path.isfile(LAST_BACKUP_FILE):
         return None
     with open(LAST_BACKUP_FILE, "r") as fh:
@@ -473,7 +231,7 @@ def get_latest_backup():
 
 
 def backup_database(date=None):
-    """Main function."""
+    """Backup the database."""
     dump_database()
     upload_to_online_backup(date)
     remove_old_database_files()
@@ -481,6 +239,7 @@ def backup_database(date=None):
 
 
 def delete_files(connexion=None, file_regex=None):
+    """Delete files matching a regex pattern."""
     if connexion is None:
         connexion = boto_client()
 
@@ -491,6 +250,7 @@ def delete_files(connexion=None, file_regex=None):
 
 
 def get_backups(connexion=None, date_format=FILE_FORMAT):
+    """Get list of all backups with date and size information."""
     if connexion is None:
         connexion = boto_client()
     backups = []
@@ -501,7 +261,11 @@ def get_backups(connexion=None, date_format=FILE_FORMAT):
         except ValueError:
             # is not a database backup
             continue
-        backups.append({"key": backup_key, "date": file_date})
+        backups.append({
+            "key": backup_key,
+            "date": file_date,
+            "size": backup_key.get("Size", 0),
+        })
 
     backups = sorted(backups, key=lambda backup: backup["date"])
 
@@ -509,6 +273,7 @@ def get_backups(connexion=None, date_format=FILE_FORMAT):
 
 
 def prepare_sql_dump(path, db_name, db_user):
+    """Prepare SQL dump for loading."""
     import fileinput
     import re
     from django.db import connection
@@ -535,11 +300,13 @@ def prepare_sql_dump(path, db_name, db_user):
 
 
 def prepare_compress_dump(path, db_name, db_user):
+    """Prepare compressed dump for loading."""
     shell_cmd = f"pg_restore -U {db_user} --dbname {db_name} -v {path} --jobs {BACKUP_RECOVER_N_WORKERS} --clean --if-exists --no-owner --role={db_user}"
     return (shell_cmd, "Password:")
 
 
 def load_postgresql_dump(path):
+    """Load PostgreSQL dump from file."""
     # load the dump
     db_name = settings.DATABASES["default"]["NAME"]
     db_user = settings.DATABASES["default"]["USER"]
@@ -594,28 +361,22 @@ def recover_database(db_file=None):
     os.remove(DATABASE_BACKUP_FILE)
 
 
-def list_backup(date_format):
+def list_backups(date_format):
+    """List backups with a specific date format and human-readable sizes."""
     backups = get_backups(date_format=date_format)
 
     for backup in backups:
-        print(backup["key"]["Key"])
+        size_human = humanize.naturalsize(backup["size"], binary=True)
+        print(f"{backup['key']['Key']} ({size_human})")
 
 
 def list_saved_databases():
-    list_backup(date_format=FILE_FORMAT)
-
-
-def list_saved_zipped_media():
-    list_backup(date_format=ZIPPED_MEDIA_FILE_FORMAT)
+    """List all saved database backups."""
+    list_backups(date_format=FILE_FORMAT)
 
 
 def db_name(date=None) -> str:
+    """Generate filename for database backup."""
     if date is None:
         date = datetime.datetime.now()
     return date.strftime(FILE_FORMAT)
-
-
-def zipped_media_file_name(date=None) -> str:
-    if date is None:
-        date = datetime.datetime.now()
-    return date.strftime(ZIPPED_MEDIA_FILE_FORMAT)
