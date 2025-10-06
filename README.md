@@ -30,6 +30,7 @@ BACKUP_BUCKET = 'my_project_backup'  # S3 Bucket
 BACKUP_KEEP_N_DAYS = 31  # Optional, defaults to 31
 BACKUP_HOST = None  # Optional, default to s3.fr-par.scw.cloud (Scaleway Storage in Paris)
 BACKUP_USE_AWS = False # True if you want to use Amazon s3
+BACKUP_REGION = 'eu-west-1' # only used when BACKUP_USE_AWS is True
 
 # Optional, for compressing the backup
 BACKUP_COMPRESS = True
