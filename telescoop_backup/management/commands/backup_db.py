@@ -123,7 +123,7 @@ class Command(BaseCommand):
                 rollbar.init(**ROLLBAR)
 
             try:
-                self._handle_internal(args, options)
+                self._handle_internal(*args, **options)
             except Exception as e:
                 rollbar.report_exc_info()
                 raise e
