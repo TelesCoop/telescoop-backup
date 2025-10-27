@@ -111,7 +111,7 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         has_rollbar = 'ROLLBAR' in settings
         if not has_rollbar:
-            self._handle_internal(args, options)
+            self._handle_internal(*args, **options)
         else:
             ROLLBAR = settings['ROLLBAR']
             import rollbar
