@@ -76,3 +76,8 @@ If you use it in local environment, ignore the backup files
 .telescoop_backup_last_backup
 *.sqlite
 ```
+
+## Development
+
+* Update  version in `setup.cfg` ;
+* Create a tag for PyPI publishing ;

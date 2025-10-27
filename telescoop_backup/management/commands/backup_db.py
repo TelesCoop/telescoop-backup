@@ -130,11 +130,11 @@ class Command(BaseCommand):
             usage_error()
 
     def handle(self, *args, **options):
-        has_rollbar = 'ROLLBAR' in settings
+        has_rollbar = hasattr(settings, 'ROLLBAR')
         if not has_rollbar:
             self._handle_internal(*args, **options)
         else:
-            ROLLBAR = settings['ROLLBAR']
+            ROLLBAR = settings.ROLLBAR
             import rollbar
 
             try:
