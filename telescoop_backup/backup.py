@@ -325,7 +325,7 @@ def load_postgresql_dump(path):
         subprocess.check_output(shell_cmd, shell=True)
 
 
-def recover_database(db_file=None):
+def recover_database(db_file=None, copy_old_db=True):
     """
     Replace current database with target backup.
 
@@ -351,7 +351,8 @@ def recover_database(db_file=None):
 
     # we now assume sqlite DB
     # copy to database file
-    shutil.copy(db_file_path, "db_before_recovery.sqlite")
+    if copy_old_db:
+        shutil.copy(db_file_path, "db_before_recovery.sqlite")
     shutil.copy(DATABASE_BACKUP_FILE, db_file_path)
     os.remove(DATABASE_BACKUP_FILE)
 

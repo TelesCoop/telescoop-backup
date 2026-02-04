@@ -33,7 +33,9 @@ usage:
   or `python backup_db.py list`
          to list already backed up files
   or `python backup_db.py recover xx_db@YYYY-MM-DDTHH:MM.sqlite`
-         to recover from specific file
+         to recover from specific file  
+  or `python backup_db.py recover_db
+         to recover the db only
   or `python backup_db.py recover_media
          to recover the media
   or `python backup_db.py recover_db_and_media
