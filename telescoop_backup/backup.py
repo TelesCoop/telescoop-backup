@@ -10,6 +10,7 @@ from enum import Enum
 import humanize
 
 import boto3
+from boto3.s3.transfer import TransferConfig
 from botocore.exceptions import ClientError
 
 
@@ -144,7 +145,10 @@ def backup_file(file_path: str, remote_key: str, connexion=None, skip_if_exists=
 
     if skip_if_exists and _file_exists_in_bucket(connexion, BUCKET, remote_key):
         return
-    connexion.upload_file(file_path, BUCKET, remote_key)
+    file_size = os.path.getsize(file_path)
+    chunk_size = max(8 * 1024 * 1024, -(-file_size // 1000))
+    config = TransferConfig(multipart_chunksize=chunk_size)
+    connexion.upload_file(file_path, BUCKET, remote_key, Config=config)
 
 
 def backup_folder(path: str, remote_path: str, connexion=None):
