@@ -1,6 +1,7 @@
 import datetime
 import os
 import shutil
+from concurrent.futures import ThreadPoolExecutor
 from django.conf import settings
 
 from .backup import (
@@ -86,8 +87,13 @@ def backup_database_and_media(zipped_media=True, overwrite=False):
 
 
 def recover_database_and_media(file_name=None, db_file=None):
-    """Recover both database and media files."""
+    """Recover database and media files in parallel."""
     from .backup import recover_database
 
-    recover_database(db_file)
-    recover_zipped_media(file_name)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [
+            executor.submit(recover_database, db_file),
+            executor.submit(recover_zipped_media, file_name),
+        ]
+        for future in futures:
+            future.result()

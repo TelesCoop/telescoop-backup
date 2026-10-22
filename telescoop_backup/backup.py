@@ -77,7 +77,7 @@ CLIENT_PARAMS_BY_BACKUP = {
 def boto_client(backup_type=BackupType.MAIN):
     """Connect to AWS S3."""
 
-    return boto3.client(
+    return boto3.session.Session().client(
         "s3",
         aws_access_key_id=settings.BACKUP_ACCESS,
         aws_secret_access_key=settings.BACKUP_SECRET,
