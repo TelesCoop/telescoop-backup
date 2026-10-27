@@ -1,7 +1,8 @@
 import datetime
 import os
 import shutil
-from concurrent.futures import ThreadPoolExecutor
+import zipfile
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from django.conf import settings
 
 from .backup import (
@@ -18,6 +19,7 @@ from .backup import (
 # Media backup settings
 ZIPPED_BACKUP_FILE = os.path.join(settings.BASE_DIR, "media.zip")
 ZIPPED_MEDIA_FILE_FORMAT = f"{DATE_FORMAT}_media.zip"
+UNZIP_N_WORKERS = getattr(settings, "BACKUP_UNZIP_N_WORKERS", os.cpu_count() // 2)
 
 
 def backup_media():
@@ -51,8 +53,27 @@ def recover_zipped_media(file_name=None):
 
     connexion.download_file(Bucket=BUCKET, Key=file_name, Filename=ZIPPED_BACKUP_FILE)
 
-    shutil.unpack_archive(ZIPPED_BACKUP_FILE, settings.MEDIA_ROOT)
+    unzip_parallel(ZIPPED_BACKUP_FILE, settings.MEDIA_ROOT)
     os.remove(ZIPPED_BACKUP_FILE)
+
+
+def _extract_members(zip_path, names, target_dir):
+    with zipfile.ZipFile(zip_path) as archive:
+        archive.extractall(target_dir, names)
+
+
+def unzip_parallel(zip_path, target_dir, n_workers=UNZIP_N_WORKERS):
+    with zipfile.ZipFile(zip_path) as archive:
+        members = archive.infolist()
+        archive.extractall(target_dir, [m for m in members if m.is_dir()])
+    names = [m.filename for m in members if not m.is_dir()]
+    with ProcessPoolExecutor(max_workers=n_workers) as executor:
+        futures = [
+            executor.submit(_extract_members, zip_path, names[i::n_workers], target_dir)
+            for i in range(n_workers)
+        ]
+        for future in futures:
+            future.result()
 
 
 def list_saved_zipped_media():
