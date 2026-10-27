@@ -46,7 +46,7 @@ usage:
 
 
 class Command(BaseCommand):
-    help = "Backup database on AWS"
+    help = "Backup database on S3."
     missing_args_message = COMMAND_HELP
 
     def not_implemented(self):
